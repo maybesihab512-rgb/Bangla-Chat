@@ -1,0 +1,6 @@
+{
+  "name": "CipherLink",
+  "description": "Secure messaging and calling app with crystal-clear voice and video.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

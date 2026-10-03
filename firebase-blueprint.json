@@ -1,0 +1,155 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Public user profile and presence information",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the user"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name of the user"
+        },
+        "username": {
+          "type": "string",
+          "description": "Unique cyber handle or username without @"
+        },
+        "profilePhoto": {
+          "type": "string",
+          "description": "Avatar initials or image URL"
+        },
+        "phoneNumber": {
+          "type": "string",
+          "description": "Phone number if provided"
+        },
+        "email": {
+          "type": "string",
+          "description": "Email address if provided"
+        },
+        "onlineStatus": {
+          "type": "string",
+          "description": "Current status: online, offline, busy, away"
+        },
+        "lastSeen": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of last activity"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Account registration timestamp"
+        }
+      },
+      "required": ["userId", "displayName", "username"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Chat session between peers or in groups",
+      "type": "object",
+      "properties": {
+        "conversationId": {
+          "type": "string",
+          "description": "Unique conversation identifier"
+        },
+        "participantIds": {
+          "type": "array",
+          "description": "List of user IDs participating in the conversation"
+        },
+        "lastMessage": {
+          "type": "string",
+          "description": "Snippet of the most recent message"
+        },
+        "lastSenderId": {
+          "type": "string",
+          "description": "UID of the user who sent the last message"
+        },
+        "lastMessageTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of the last message"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of the conversation update"
+        }
+      },
+      "required": ["conversationId", "participantIds"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Individual message in a conversation",
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "Unique message identifier"
+        },
+        "conversationId": {
+          "type": "string",
+          "description": "ID of the parent conversation"
+        },
+        "senderId": {
+          "type": "string",
+          "description": "UID of the sending user"
+        },
+        "receiverId": {
+          "type": "string",
+          "description": "UID of the recipient user"
+        },
+        "messageText": {
+          "type": "string",
+          "description": "Decrypted payload or message text"
+        },
+        "messageType": {
+          "type": "string",
+          "description": "Type: text, emoji, image, video, file, voice"
+        },
+        "status": {
+          "type": "string",
+          "description": "Delivery status: sending, sent, delivered, seen"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the message was sent"
+        },
+        "deliveredAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when delivered to recipient"
+        },
+        "seenAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when read by recipient"
+        }
+      },
+      "required": ["messageId", "conversationId", "senderId", "messageText"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/User"
+      },
+      "description": "Public user directory for searching peers"
+    },
+    "/conversations/{conversationId}": {
+      "schema": {
+        "$ref": "#/entities/Conversation"
+      },
+      "description": "Conversations list for users"
+    },
+    "/conversations/{conversationId}/messages/{messageId}": {
+      "schema": {
+        "$ref": "#/entities/Message"
+      },
+      "description": "Messages belonging to a conversation"
+    }
+  }
+}

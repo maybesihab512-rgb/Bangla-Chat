@@ -1,0 +1,8 @@
+{
+  "firestore": [
+    {
+      "database": "ai-studio-android-cipherli-72ccaa4b-6463-443c-ac23-a8bf278af715",
+      "rules": "firestore.rules"
+    }
+  ]
+}
