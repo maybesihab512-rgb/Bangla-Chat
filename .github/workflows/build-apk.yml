@@ -29,45 +29,21 @@ jobs:
           test -f app/google-services.json
           echo "Firebase configuration found."
 
-      - name: Restore stable keystore
-        env:
-          KEYSTORE_BASE64: ${{ secrets.CIPHELINK_KEYSTORE_BASE64 }}
+      - name: Check stable keystore
         run: |
-          test -n "$KEYSTORE_BASE64"
-
-          python3 - <<'PY'
-          import os
-          import base64
-
-          data = os.environ["KEYSTORE_BASE64"]
-          data = "".join(data.split())
-
-          padding = len(data) % 4
-          if padding:
-              data += "=" * (4 - padding)
-
-          decoded = base64.b64decode(data, validate=False)
-
-          if not decoded:
-              raise SystemExit("Keystore decode produced empty data.")
-
-          with open("debug.keystore", "wb") as f:
-              f.write(decoded)
-
-          print("Stable keystore restored.")
-          PY
-
-          test -s debug.keystore
+          test -f ciphelink-debug.keystore
+          cp ciphelink-debug.keystore debug.keystore
+          echo "Stable keystore found."
 
       - name: Verify signing certificate
         run: |
           echo "===== SIGNING CERTIFICATE ====="
-          ls -lh debug.keystore
           keytool -list -v \
             -keystore debug.keystore \
             -storepass android \
-            -alias androiddebugkey
+            -alias androiddebugkey | grep -E "SHA1:|SHA256:"
           echo "=============================="
+
       - name: Build APK
         run: gradle assembleDebug --no-daemon
 
