@@ -13,10 +13,14 @@ import com.example.ui.theme.CyberBgDark
 import com.example.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         CipherAppContainer.initialize(this)
+
         enableEdgeToEdge()
+
         setContent {
             MyApplicationTheme {
                 Surface(
@@ -26,33 +30,6 @@ class MainActivity : ComponentActivity() {
                     CipherNavHost()
                 }
             }
-        }
-    }
-
-    override fun onStart() {
-        super.onStart()
-        try {
-            CipherAppContainer.getInstance().authRepository.updatePresence(true)
-        } catch (e: Exception) {
-            // Ignore if container not yet ready
-        }
-    }
-
-    override fun onStop() {
-        super.onStop()
-        try {
-            CipherAppContainer.getInstance().authRepository.updatePresence(false)
-        } catch (e: Exception) {
-            // Ignore
-        }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        try {
-            CipherAppContainer.getInstance().authRepository.updatePresence(false)
-        } catch (e: Exception) {
-            // Ignore
         }
     }
 }
