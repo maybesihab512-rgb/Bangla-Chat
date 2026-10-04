@@ -62,12 +62,12 @@ jobs:
       - name: Verify signing certificate
         run: |
           echo "===== SIGNING CERTIFICATE ====="
+          ls -lh debug.keystore
           keytool -list -v \
             -keystore debug.keystore \
             -storepass android \
-            -alias androiddebugkey | grep -E "SHA1:|SHA256:"
+            -alias androiddebugkey
           echo "=============================="
-
       - name: Build APK
         run: gradle assembleDebug --no-daemon
 
