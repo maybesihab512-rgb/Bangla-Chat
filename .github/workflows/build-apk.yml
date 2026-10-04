@@ -34,10 +34,30 @@ jobs:
           KEYSTORE_BASE64: ${{ secrets.CIPHELINK_KEYSTORE_BASE64 }}
         run: |
           test -n "$KEYSTORE_BASE64"
-          CLEAN_BASE64="$(printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]')"
-          printf '%s' "$CLEAN_BASE64" | base64 -d -i > debug.keystore
+
+          python3 - <<'PY'
+          import os
+          import base64
+
+          data = os.environ["KEYSTORE_BASE64"]
+          data = "".join(data.split())
+
+          padding = len(data) % 4
+          if padding:
+              data += "=" * (4 - padding)
+
+          decoded = base64.b64decode(data, validate=False)
+
+          if not decoded:
+              raise SystemExit("Keystore decode produced empty data.")
+
+          with open("debug.keystore", "wb") as f:
+              f.write(decoded)
+
+          print("Stable keystore restored.")
+          PY
+
           test -s debug.keystore
-          echo "Stable keystore restored."
 
       - name: Verify signing certificate
         run: |
