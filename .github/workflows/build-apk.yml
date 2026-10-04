@@ -29,27 +29,23 @@ jobs:
           test -f app/google-services.json
           echo "Firebase configuration found."
 
-      - name: Create debug keystore
+      - name: Restore stable keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.CIPHELINK_KEYSTORE_BASE64 }}
         run: |
-          keytool -genkeypair \
-            -v \
-            -keystore debug.keystore \
-            -storepass android \
-            -keypass android \
-            -alias androiddebugkey \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
+          test -n "$KEYSTORE_BASE64"
+          echo "$KEYSTORE_BASE64" | base64 --decode > debug.keystore
+          test -s debug.keystore
+          echo "Stable keystore restored."
 
-      - name: Show signing SHA-1 and SHA-256
+      - name: Show signing certificate
         run: |
-          echo "===== DEBUG SIGNING CERTIFICATE ====="
+          echo "===== SIGNING CERTIFICATE ====="
           keytool -list -v \
             -keystore debug.keystore \
             -storepass android \
             -alias androiddebugkey | grep -E "SHA1:|SHA256:"
-          echo "====================================="
+          echo "=============================="
 
       - name: Build APK
         run: gradle assembleDebug --no-daemon
