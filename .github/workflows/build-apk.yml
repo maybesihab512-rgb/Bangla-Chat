@@ -34,7 +34,8 @@ jobs:
           KEYSTORE_BASE64: ${{ secrets.CIPHELINK_KEYSTORE_BASE64 }}
         run: |
           test -n "$KEYSTORE_BASE64"
-          echo "$KEYSTORE_BASE64" | base64 --decode > debug.keystore
+          CLEAN_BASE64="$(printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]')"
+          printf '%s' "$CLEAN_BASE64" | base64 --decode > debug.keystore
           test -s debug.keystore
           echo "Stable keystore restored."
 
