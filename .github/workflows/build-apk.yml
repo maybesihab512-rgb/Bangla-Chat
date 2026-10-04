@@ -35,11 +35,11 @@ jobs:
         run: |
           test -n "$KEYSTORE_BASE64"
           CLEAN_BASE64="$(printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]')"
-          printf '%s' "$CLEAN_BASE64" | base64 --decode > debug.keystore
+          printf '%s' "$CLEAN_BASE64" | base64 -d -i > debug.keystore
           test -s debug.keystore
           echo "Stable keystore restored."
 
-      - name: Show signing certificate
+      - name: Verify signing certificate
         run: |
           echo "===== SIGNING CERTIFICATE ====="
           keytool -list -v \
