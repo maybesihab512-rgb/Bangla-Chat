@@ -42,6 +42,15 @@ jobs:
             -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
 
+      - name: Show signing SHA-1 and SHA-256
+        run: |
+          echo "===== DEBUG SIGNING CERTIFICATE ====="
+          keytool -list -v \
+            -keystore debug.keystore \
+            -storepass android \
+            -alias androiddebugkey | grep -E "SHA1:|SHA256:"
+          echo "====================================="
+
       - name: Build APK
         run: gradle assembleDebug --no-daemon
 
