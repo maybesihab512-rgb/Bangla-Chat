@@ -177,7 +177,6 @@ fun ChatDetailScreen(
             .fillMaxSize()
             .background(CyberBgDark)
             .statusBarsPadding()
-            .navigationBarsPadding()
             .imePadding()
     ) {
         // Chat Header
