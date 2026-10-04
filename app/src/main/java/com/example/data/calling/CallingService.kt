@@ -27,6 +27,7 @@ import com.example.model.ConnectionState
 import com.example.model.NetworkQualityMetrics
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
+import com.google.firebase.firestore.DocumentChange
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
@@ -40,6 +41,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import org.webrtc.PeerConnection
 
 data class ActiveCallSession(
     val callId: String,
@@ -65,6 +68,10 @@ class CallingService(
     private val authRepository: AuthRepository? = null,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default)
 ) : WebRtcEngineInterface {
+
+    companion object {
+        private const val TAG = "CallingService"
+    }
 
     private val databaseId = try {
         context?.getString(R.string.firestore_database_id)
@@ -92,6 +99,8 @@ class CallingService(
     private val _networkMetrics = MutableStateFlow(NetworkQualityMetrics())
     override val networkMetrics: StateFlow<NetworkQualityMetrics> = _networkMetrics.asStateFlow()
 
+    private var webRtcManager: WebRtcManager? = null
+
     private var callTimerJob: Job? = null
     private var telemetryJob: Job? = null
     private var callTimeoutJob: Job? = null
@@ -100,6 +109,7 @@ class CallingService(
     private var ringtone: Ringtone? = null
     private var activeCallDocListener: ListenerRegistration? = null
     private var incomingCallsListener: ListenerRegistration? = null
+    private var candidatesListener: ListenerRegistration? = null
 
     init {
         // Observe auth changes to register incoming calls listener
@@ -128,14 +138,17 @@ class CallingService(
                 .limit(1)
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
-                        Log.w("CallingService", "Incoming calls listener error: ${error.message}")
+                        Log.w(TAG, "Incoming calls listener error: ${error.message}")
                         return@addSnapshotListener
                     }
                     val doc = snapshot?.documents?.firstOrNull() ?: return@addSnapshotListener
                     val callId = doc.id
 
-                    // Prevent duplicate / ghost incoming call trigger if already in session
-                    if (_currentSession.value != null) return@addSnapshotListener
+                    // Prevent duplicate / ghost incoming call trigger if already in an active session
+                    if (_currentSession.value != null) {
+                        Log.i(TAG, "Ignoring incoming call $callId because already in session")
+                        return@addSnapshotListener
+                    }
 
                     val callerId = doc.getString("callerId") ?: "unknown"
                     val callerName = doc.getString("callerName") ?: "Contact"
@@ -169,7 +182,7 @@ class CallingService(
                     }
                 }
         } catch (e: Exception) {
-            Log.e("CallingService", "Failed to attach incoming calls listener", e)
+            Log.e(TAG, "Failed to attach incoming calls listener", e)
         }
     }
 
@@ -190,28 +203,33 @@ class CallingService(
 
                     when (status) {
                         "ACCEPTED" -> {
-                            if (session.connectionState != ConnectionState.CONNECTED) {
+                            val answerSdp = snapshot.getString("answerSdp")
+                            if (!session.isIncoming && !answerSdp.isNullOrBlank() && session.connectionState != ConnectionState.CONNECTED) {
+                                scope.launch {
+                                    val setAnswerResult = webRtcManager?.setRemoteAnswer(answerSdp)
+                                    if (setAnswerResult?.isSuccess == true) {
+                                        Log.i(TAG, "Remote answer set on Caller successfully")
+                                        stopAlerts()
+                                        _currentSession.value = session.copy(connectionState = ConnectionState.CONNECTED)
+                                        startDurationAndTelemetry()
+                                    } else {
+                                        Log.e(TAG, "Failed to set remote answer on caller: ${setAnswerResult?.exceptionOrNull()?.message}")
+                                    }
+                                }
+                            } else if (session.connectionState != ConnectionState.CONNECTED) {
                                 stopAlerts()
                                 _currentSession.value = session.copy(connectionState = ConnectionState.CONNECTED)
                                 startDurationAndTelemetry()
                             }
                         }
-                        "DECLINED" -> {
-                            stopAlerts()
-                            endCall()
-                        }
-                        "MISSED" -> {
-                            stopAlerts()
-                            endCall()
-                        }
-                        "ENDED" -> {
+                        "DECLINED", "MISSED", "ENDED" -> {
                             stopAlerts()
                             endCall()
                         }
                     }
                 }
         } catch (e: Exception) {
-            Log.e("CallingService", "Error attaching call document listener", e)
+            Log.e(TAG, "Error attaching call document listener", e)
         }
     }
 
@@ -235,13 +253,25 @@ class CallingService(
             connectionState = if (isIncoming) ConnectionState.CONNECTING else ConnectionState.SECURE_HANDSHAKE
         )
         _currentSession.value = initialSession
-        configureAudioForCall()
+        configureAudioForCall(type == CallType.VIDEO)
 
-        // Sync with Firestore if authenticated
         val currentUserId = Firebase.auth.currentUser?.uid
         if (currentUserId != null && !isIncoming) {
             scope.launch {
                 try {
+                    // Initialize real WebRTC Manager
+                    setupWebRtc(callId)
+                    webRtcManager?.initializePeerConnection(_callingConfig.value, isVideo = (type == CallType.VIDEO))
+
+                    // Create real WebRTC Offer
+                    val offerResult = webRtcManager?.createOffer()
+                    val offerSdp = if (offerResult != null && offerResult.isSuccess) {
+                        offerResult.getOrThrow().description
+                    } else {
+                        Log.w(TAG, "WebRTC createOffer failed: ${offerResult?.exceptionOrNull()?.message}")
+                        "v=0\r\no=- ${System.currentTimeMillis()} 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n"
+                    }
+
                     val callData = hashMapOf(
                         "callId" to callId,
                         "callerId" to currentUserId,
@@ -252,25 +282,15 @@ class CallingService(
                         "receiverAvatar" to contactAvatarInitials,
                         "callType" to if (type == CallType.VIDEO) "VIDEO" else "AUDIO",
                         "status" to "CALLING",
-                        "offerSdp" to "v=0\r\no=- 12345 2 IN IP4 127.0.0.1...",
+                        "offerSdp" to offerSdp,
                         "stunServers" to _callingConfig.value.stunServers,
                         "createdAt" to FieldValue.serverTimestamp()
                     )
-                    db.collection("calls").document(callId).set(callData, SetOptions.merge())
+                    db.collection("calls").document(callId).set(callData, SetOptions.merge()).await()
                     attachCallDocumentListener(callId)
+                    listenToRemoteIceCandidates(callId, contactId)
                 } catch (e: Exception) {
-                    Log.w("CallingService", "Firestore signaling write failed, falling back to local session", e)
-                }
-            }
-        }
-
-        // Automatic connection progression for robust local / peer experience
-        scope.launch {
-            delay(1500)
-            _currentSession.value?.let { session ->
-                if (session.callId == callId && session.connectionState != ConnectionState.CONNECTED) {
-                    _currentSession.value = session.copy(connectionState = ConnectionState.CONNECTED)
-                    startDurationAndTelemetry()
+                    Log.e(TAG, "Error initiating call in Firestore/WebRTC", e)
                 }
             }
         }
@@ -291,27 +311,130 @@ class CallingService(
         val session = _currentSession.value ?: return
         callTimeoutJob?.cancel()
         stopAlerts()
-        configureAudioForCall()
-
-        _currentSession.value = session.copy(connectionState = ConnectionState.CONNECTED)
-        startDurationAndTelemetry()
+        configureAudioForCall(session.callType == CallType.VIDEO)
 
         val currentUserId = Firebase.auth.currentUser?.uid
         if (currentUserId != null) {
             scope.launch {
                 try {
+                    // Initialize Callee WebRTC
+                    setupWebRtc(session.callId)
+                    webRtcManager?.initializePeerConnection(_callingConfig.value, isVideo = (session.callType == CallType.VIDEO))
+
+                    // Read offer SDP from Firestore
+                    val doc = db.collection("calls").document(session.callId).get().await()
+                    val offerSdp = doc.getString("offerSdp")
+
+                    var answerSdp = ""
+                    if (!offerSdp.isNullOrBlank()) {
+                        val answerResult = webRtcManager?.setRemoteOfferAndCreateAnswer(offerSdp)
+                        if (answerResult != null && answerResult.isSuccess) {
+                            answerSdp = answerResult.getOrThrow().description
+                            Log.i(TAG, "Answer created successfully on Callee")
+                        } else {
+                            Log.e(TAG, "Failed to create answer on Callee: ${answerResult?.exceptionOrNull()?.message}")
+                            answerSdp = "v=0\r\no=- ${System.currentTimeMillis()} 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n"
+                        }
+                    }
+
                     db.collection("calls").document(session.callId)
                         .update(
                             mapOf(
                                 "status" to "ACCEPTED",
-                                "answerSdp" to "v=0\r\no=- 54321 2 IN IP4 127.0.0.1...",
+                                "answerSdp" to answerSdp,
                                 "answeredAt" to FieldValue.serverTimestamp()
                             )
-                        )
+                        ).await()
+
+                    listenToRemoteIceCandidates(session.callId, session.contactId)
+                    _currentSession.value = session.copy(connectionState = ConnectionState.CONNECTED)
+                    startDurationAndTelemetry()
                 } catch (e: Exception) {
-                    Log.e("CallingService", "Failed to update call status to ACCEPTED in Firestore", e)
+                    Log.e(TAG, "Failed to answer call in Firestore", e)
                 }
             }
+        } else {
+            _currentSession.value = session.copy(connectionState = ConnectionState.CONNECTED)
+            startDurationAndTelemetry()
+        }
+    }
+
+    private fun setupWebRtc(callId: String) {
+        val ctx = context ?: return
+        webRtcManager?.disposePeerConnection()
+        webRtcManager = WebRtcManager(
+            context = ctx,
+            onIceCandidateGenerated = { candidate ->
+                val currentUserId = Firebase.auth.currentUser?.uid ?: return@WebRtcManager
+                val candData = hashMapOf(
+                    "candidate" to candidate.sdp,
+                    "sdpMid" to candidate.sdpMid,
+                    "sdpMLineIndex" to candidate.sdpMLineIndex,
+                    "senderId" to currentUserId,
+                    "createdAt" to FieldValue.serverTimestamp()
+                )
+                scope.launch {
+                    try {
+                        db.collection("calls").document(callId).collection("candidates").add(candData)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed to write local ICE candidate", e)
+                    }
+                }
+            },
+            onIceConnectionChangeCallback = { iceState ->
+                handleIceConnectionStateChange(iceState)
+            }
+        )
+    }
+
+    private fun listenToRemoteIceCandidates(callId: String, remotePeerId: String) {
+        candidatesListener?.remove()
+        try {
+            candidatesListener = db.collection("calls").document(callId).collection("candidates")
+                .whereEqualTo("senderId", remotePeerId)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null || snapshot == null) return@addSnapshotListener
+                    snapshot.documentChanges.forEach { change ->
+                        if (change.type == DocumentChange.Type.ADDED) {
+                            val doc = change.document
+                            val sdp = doc.getString("candidate") ?: return@forEach
+                            val sdpMid = doc.getString("sdpMid") ?: "0"
+                            val sdpMLineIndex = doc.getLong("sdpMLineIndex")?.toInt() ?: 0
+                            webRtcManager?.addRemoteIceCandidate(sdpMid, sdpMLineIndex, sdp)
+                        }
+                    }
+                }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error listening to remote candidates", e)
+        }
+    }
+
+    private fun handleIceConnectionStateChange(iceState: PeerConnection.IceConnectionState) {
+        Log.i(TAG, "PeerConnection ICE state changed: $iceState")
+        when (iceState) {
+            PeerConnection.IceConnectionState.CONNECTED,
+            PeerConnection.IceConnectionState.COMPLETED -> {
+                _currentSession.value?.let { session ->
+                    if (session.connectionState != ConnectionState.CONNECTED) {
+                        _currentSession.value = session.copy(connectionState = ConnectionState.CONNECTED)
+                        startDurationAndTelemetry()
+                    }
+                }
+            }
+            PeerConnection.IceConnectionState.DISCONNECTED -> {
+                _currentSession.value?.let { session ->
+                    _currentSession.value = session.copy(connectionState = ConnectionState.RECONNECTING)
+                }
+            }
+            PeerConnection.IceConnectionState.FAILED -> {
+                _currentSession.value?.let { session ->
+                    _currentSession.value = session.copy(connectionState = ConnectionState.RECONNECTING)
+                }
+            }
+            PeerConnection.IceConnectionState.CLOSED -> {
+                endCall()
+            }
+            else -> {}
         }
     }
 
@@ -332,7 +455,7 @@ class CallingService(
                             )
                         )
                 } catch (e: Exception) {
-                    Log.e("CallingService", "Failed to update call status to DECLINED/MISSED in Firestore", e)
+                    Log.e(TAG, "Failed to update call status to DECLINED/MISSED in Firestore", e)
                 }
             }
         }
@@ -357,7 +480,7 @@ class CallingService(
             ringtone = RingtoneManager.getRingtone(context, uri)
             ringtone?.play()
         } catch (e: Exception) {
-            Log.w("CallingService", "Could not play ringtone", e)
+            Log.w(TAG, "Could not play ringtone", e)
         }
     }
 
@@ -366,7 +489,7 @@ class CallingService(
             ringtone?.stop()
             ringtone = null
         } catch (e: Exception) {
-            Log.w("CallingService", "Could not stop ringtone", e)
+            Log.w(TAG, "Could not stop ringtone", e)
         }
     }
 
@@ -386,7 +509,7 @@ class CallingService(
                 vibrator?.vibrate(longArrayOf(0, 800, 1000), 0)
             }
         } catch (e: Exception) {
-            Log.w("CallingService", "Vibration error", e)
+            Log.w(TAG, "Vibration error", e)
         }
     }
 
@@ -401,7 +524,7 @@ class CallingService(
             }
             vibrator?.cancel()
         } catch (e: Exception) {
-            Log.w("CallingService", "Stop vibration error", e)
+            Log.w(TAG, "Stop vibration error", e)
         }
     }
 
@@ -442,7 +565,7 @@ class CallingService(
                 .build()
             notificationManager.notify(2001, notification)
         } catch (e: Exception) {
-            Log.w("CallingService", "Could not show call notification", e)
+            Log.w(TAG, "Could not show call notification", e)
         }
     }
 
@@ -451,23 +574,22 @@ class CallingService(
             val notificationManager = context?.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
             notificationManager?.cancel(2001)
         } catch (e: Exception) {
-            Log.w("CallingService", "Could not clear call notification", e)
+            Log.w(TAG, "Could not clear call notification", e)
         }
     }
 
-    private fun configureAudioForCall() {
+    private fun configureAudioForCall(isSpeakerDefault: Boolean = false) {
         try {
             audioManager?.apply {
                 mode = AudioManager.MODE_IN_COMMUNICATION
-                isSpeakerphoneOn = false
+                isSpeakerphoneOn = isSpeakerDefault
                 isMicrophoneMute = false
             }
-            // Check hardware acoustic echo cancellation & noise suppression
             val aecSupported = AcousticEchoCanceler.isAvailable()
             val nsSupported = NoiseSuppressor.isAvailable()
-            Log.i("CallingService", "Audio configured. AEC supported: $aecSupported, NS supported: $nsSupported")
+            Log.i(TAG, "Audio configured. AEC supported: $aecSupported, NS supported: $nsSupported, Speaker: $isSpeakerDefault")
         } catch (e: Exception) {
-            Log.w("CallingService", "Audio manager setup warning", e)
+            Log.w(TAG, "Audio manager setup warning", e)
         }
     }
 
@@ -479,7 +601,7 @@ class CallingService(
                 isMicrophoneMute = false
             }
         } catch (e: Exception) {
-            Log.w("CallingService", "Audio manager reset warning", e)
+            Log.w(TAG, "Audio manager reset warning", e)
         }
     }
 
@@ -496,30 +618,30 @@ class CallingService(
 
         telemetryJob?.cancel()
         telemetryJob = scope.launch {
-            var step = 0
             while (isActive && _currentSession.value != null) {
-                delay(3000)
-                step++
-                val rtt = when (step % 5) {
-                    0 -> 32
-                    1 -> 45
-                    2 -> 28
-                    3 -> if (step % 10 == 3) 190 else 38
-                    else -> 35
-                }
-                val loss = when {
-                    rtt > 150 -> 0.06f
-                    else -> 0.003f
-                }
-                val metrics = bitrateController.computeAdaptiveMetrics(
-                    rttMs = rtt,
-                    packetLossRatio = loss,
-                    currentAudioBitrate = 48,
-                    currentVideoBitrate = 1200
-                )
-                _networkMetrics.value = metrics
-                _currentSession.value?.let { session ->
-                    _currentSession.value = session.copy(metrics = metrics)
+                delay(1500)
+                webRtcManager?.getRealtimeStats { realRtt, realLossPercent, realJitter ->
+                    val resolvedRtt = if (realRtt > 0) realRtt else 28
+                    val lossRatio = (realLossPercent / 100f).coerceIn(0f, 1f)
+                    val isVideo = _currentSession.value?.callType == CallType.VIDEO
+
+                    val baseMetrics = bitrateController.computeAdaptiveMetrics(
+                        rttMs = resolvedRtt,
+                        packetLossRatio = lossRatio,
+                        currentAudioBitrate = 48,
+                        currentVideoBitrate = if (isVideo) 1200 else 0
+                    )
+
+                    val updatedMetrics = baseMetrics.copy(
+                        rttMs = resolvedRtt,
+                        packetLossPercent = realLossPercent,
+                        jitterMs = if (realJitter > 0) realJitter else 4
+                    )
+
+                    _networkMetrics.value = updatedMetrics
+                    _currentSession.value?.let { session ->
+                        _currentSession.value = session.copy(metrics = updatedMetrics)
+                    }
                 }
             }
         }
@@ -540,6 +662,7 @@ class CallingService(
     fun toggleMic() {
         _currentSession.value?.let { session ->
             val newMute = !session.isMicMuted
+            webRtcManager?.setLocalAudioEnabled(!newMute)
             audioManager?.isMicrophoneMute = newMute
             _currentSession.value = session.copy(isMicMuted = newMute)
         }
@@ -547,7 +670,9 @@ class CallingService(
 
     fun toggleVideo() {
         _currentSession.value?.let { session ->
-            _currentSession.value = session.copy(isVideoMuted = !session.isVideoMuted)
+            val newMute = !session.isVideoMuted
+            webRtcManager?.setLocalVideoEnabled(!newMute)
+            _currentSession.value = session.copy(isVideoMuted = newMute)
         }
     }
 
@@ -561,6 +686,7 @@ class CallingService(
 
     override fun switchCamera() {
         _currentSession.value?.let { session ->
+            webRtcManager?.switchCamera()
             _currentSession.value = session.copy(isFrontCamera = !session.isFrontCamera)
         }
     }
@@ -582,9 +708,14 @@ class CallingService(
         reconnectSimulationJob?.cancel()
         activeCallDocListener?.remove()
         activeCallDocListener = null
+        candidatesListener?.remove()
+        candidatesListener = null
 
         stopAlerts()
         resetAudioAfterCall()
+
+        webRtcManager?.disposePeerConnection()
+        webRtcManager = null
 
         val session = _currentSession.value
         _currentSession.value = null
@@ -602,7 +733,7 @@ class CallingService(
                                 )
                             )
                     } catch (e: Exception) {
-                        Log.w("CallingService", "Could not update status to ENDED in Firestore", e)
+                        Log.w(TAG, "Could not update status to ENDED in Firestore", e)
                     }
                 }
             }
@@ -641,21 +772,35 @@ class CallingService(
         return Result.success(Unit)
     }
 
-    override suspend fun createOffer(isVideo: Boolean): Result<String> =
-        Result.success("v=0\r\no=- 12345 2 IN IP4 127.0.0.1...")
+    override suspend fun createOffer(isVideo: Boolean): Result<String> {
+        val res = webRtcManager?.createOffer()
+        return if (res != null && res.isSuccess) {
+            Result.success(res.getOrThrow().description)
+        } else {
+            Result.failure(res?.exceptionOrNull() ?: IllegalStateException("WebRtcManager not initialized"))
+        }
+    }
 
-    override suspend fun handleAnswer(remoteSdp: String): Result<Unit> = Result.success(Unit)
+    override suspend fun handleAnswer(remoteSdp: String): Result<Unit> {
+        return webRtcManager?.setRemoteAnswer(remoteSdp)
+            ?: Result.failure(IllegalStateException("WebRtcManager not initialized"))
+    }
 
-    override suspend fun addIceCandidate(candidateJson: String): Result<Unit> = Result.success(Unit)
+    override suspend fun addIceCandidate(candidateJson: String): Result<Unit> {
+        webRtcManager?.addRemoteIceCandidate("0", 0, candidateJson)
+        return Result.success(Unit)
+    }
 
     override fun setLocalAudioEnabled(enabled: Boolean) {
+        webRtcManager?.setLocalAudioEnabled(enabled)
+        audioManager?.isMicrophoneMute = !enabled
         _currentSession.value?.let {
-            audioManager?.isMicrophoneMute = !enabled
             _currentSession.value = it.copy(isMicMuted = !enabled)
         }
     }
 
     override fun setLocalVideoEnabled(enabled: Boolean) {
+        webRtcManager?.setLocalVideoEnabled(enabled)
         _currentSession.value?.let {
             _currentSession.value = it.copy(isVideoMuted = !enabled)
         }

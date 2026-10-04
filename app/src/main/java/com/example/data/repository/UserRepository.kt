@@ -16,9 +16,12 @@ import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
@@ -88,9 +91,36 @@ class UserRepository(
 
     fun getContactById(id: String): User? = _contacts.value.find { it.id == id }
 
+    fun observeUser(userId: String): Flow<User?> = callbackFlow {
+        if (userId.isBlank()) {
+            trySend(null)
+            close()
+            return@callbackFlow
+        }
+
+        val registration = db.collection("users").document(userId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null || !snapshot.exists()) {
+                    trySend(null)
+                    return@addSnapshotListener
+                }
+                try {
+                    val fu = snapshot.toObject(FirestoreUser::class.java)
+                    val user = fu?.let { mapFirestoreUserToModel(it) }
+                    trySend(user)
+                } catch (e: Exception) {
+                    trySend(null)
+                }
+            }
+
+        awaitClose {
+            registration.remove()
+        }
+    }
+
     /**
-     * Efficient, targeted Firestore queries using prefix bounds and index equality
-     * instead of downloading the whole users collection.
+     * Searches real registered users in Firebase by display name, username, or phone number.
+     * Returns real profile information and avoids fake/local data.
      */
     suspend fun searchUsers(query: String): List<User> {
         val q = query.trim()
@@ -99,51 +129,37 @@ class UserRepository(
         val currentUid = authUser.uid
         val results = mutableMapOf<String, User>()
 
-        try {
-            val cleanHandle = q.removePrefix("@").lowercase()
+        val cleanDigits = q.filter { it.isDigit() }
+        val cleanQuery = q.lowercase()
 
-            // 1. Search by username prefix
-            val byUsername = db.collection("users")
-                .orderBy("username")
-                .startAt(cleanHandle)
-                .endAt(cleanHandle + "\uf8ff")
-                .limit(15)
+        try {
+            // 1. Fetch registered users from Firestore
+            val snapshot = db.collection("users")
+                .limit(50)
                 .get()
                 .await()
 
-            byUsername.documents.forEach { doc ->
+            snapshot.documents.forEach { doc ->
                 val fu = doc.toObject(FirestoreUser::class.java)
                 if (fu != null && fu.userId.isNotBlank() && fu.userId != currentUid) {
-                    results[fu.userId] = mapFirestoreUserToModel(fu)
-                }
-            }
+                    val nameMatch = fu.displayName.lowercase().contains(cleanQuery)
+                    val usernameMatch = fu.username.lowercase().contains(cleanQuery.removePrefix("@"))
+                    val phoneDigits = fu.phoneNumber.filter { it.isDigit() }
+                    val phoneMatch = cleanDigits.length >= 3 && phoneDigits.contains(cleanDigits)
 
-            // 2. Search by displayName prefix if needed
-            if (results.size < 10) {
-                val byName = db.collection("users")
-                    .orderBy("displayName")
-                    .startAt(q)
-                    .endAt(q + "\uf8ff")
-                    .limit(15)
-                    .get()
-                    .await()
-
-                byName.documents.forEach { doc ->
-                    val fu = doc.toObject(FirestoreUser::class.java)
-                    if (fu != null && fu.userId.isNotBlank() && fu.userId != currentUid) {
+                    if (nameMatch || usernameMatch || phoneMatch) {
                         results[fu.userId] = mapFirestoreUserToModel(fu)
                     }
                 }
             }
 
-            // 3. Search by exact phone number
-            if (q.any { it.isDigit() }) {
+            // 2. Direct lookup by exact or prefix phone number if searching with digits
+            if (cleanDigits.length >= 4 && results.size < 5) {
                 val byPhone = db.collection("users")
                     .whereEqualTo("phoneNumber", q)
                     .limit(5)
                     .get()
                     .await()
-
                 byPhone.documents.forEach { doc ->
                     val fu = doc.toObject(FirestoreUser::class.java)
                     if (fu != null && fu.userId.isNotBlank() && fu.userId != currentUid) {
@@ -158,42 +174,28 @@ class UserRepository(
         return results.values.toList()
     }
 
-    fun addContact(name: String, phoneOrHandle: String) {
-        val initials = name.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("").ifEmpty { "C" }
-        val handleClean = phoneOrHandle.removePrefix("@").replace(" ", "_")
-        val newUserId = "usr_${System.currentTimeMillis() % 100000}"
-
-        val newUser = User(
-            id = newUserId,
-            name = name,
-            handle = handleClean,
-            phone = if (phoneOrHandle.startsWith("+") || phoneOrHandle.any { it.isDigit() }) phoneOrHandle else "+1 (555) 000-0000",
-            avatarInitials = initials,
-            avatarColorHex = 0xFF00F0FF,
-            statusMessage = "Available",
-            isOnline = true,
-            lastSeenText = "Online"
-        )
-
-        _contacts.value = _contacts.value + newUser
+    fun addContact(user: User) {
+        if (_contacts.value.none { it.id == user.id }) {
+            _contacts.value = _contacts.value + user
+        }
 
         val authUser = Firebase.auth.currentUser ?: return
         scope.launch {
             try {
                 val data = hashMapOf(
-                    "userId" to newUser.id,
-                    "displayName" to newUser.name,
-                    "username" to newUser.handle,
-                    "profilePhoto" to newUser.avatarInitials,
-                    "phoneNumber" to newUser.phone,
-                    "onlineStatus" to "online",
+                    "userId" to user.id,
+                    "displayName" to user.name,
+                    "username" to user.handle,
+                    "profilePhoto" to user.photoUrl.ifEmpty { user.avatarInitials },
+                    "phoneNumber" to user.phone,
+                    "onlineStatus" to if (user.isOnline) "online" else "offline",
                     "createdAt" to FieldValue.serverTimestamp(),
                     "lastSeen" to FieldValue.serverTimestamp()
                 )
                 db.collection("users")
                     .document(authUser.uid)
                     .collection("contacts")
-                    .document(newUser.id)
+                    .document(user.id)
                     .set(data, SetOptions.merge())
                     .await()
             } catch (e: Exception) {
@@ -203,8 +205,22 @@ class UserRepository(
     }
 
     private fun mapFirestoreUserToModel(fu: FirestoreUser): User {
-        val isOnline = fu.onlineStatus == "online"
+        val now = System.currentTimeMillis()
+        val lastSeenMs = fu.lastSeen?.toDate()?.time ?: 0L
+        val diffMs = now - lastSeenMs
+        // Accurate presence: genuine online only if status is online AND last heartbeat within 90 seconds
+        val isOnline = fu.onlineStatus == "online" && (lastSeenMs > 0 && diffMs < 90_000L)
         val lastSeenStr = formatLastSeen(fu.lastSeen, isOnline)
+
+        val isPhotoUrl = fu.profilePhoto.startsWith("http://") ||
+                fu.profilePhoto.startsWith("https://") ||
+                fu.profilePhoto.startsWith("content://")
+        val photoUrl = if (isPhotoUrl) fu.profilePhoto else ""
+        val initials = if (!isPhotoUrl && fu.profilePhoto.isNotBlank()) {
+            fu.profilePhoto.take(2).uppercase()
+        } else {
+            fu.displayName.take(2).uppercase().ifEmpty { "U" }
+        }
 
         return User(
             id = fu.userId,
@@ -212,7 +228,8 @@ class UserRepository(
             handle = fu.username.ifEmpty { "user_${fu.userId.take(4)}" },
             phone = fu.phoneNumber,
             email = fu.email,
-            avatarInitials = fu.profilePhoto.ifEmpty { fu.displayName.take(2).uppercase().ifEmpty { "US" } },
+            photoUrl = photoUrl,
+            avatarInitials = initials,
             avatarColorHex = if (fu.userId.hashCode() % 2 == 0) 0xFF00F0FF else 0xFF00E699,
             statusMessage = if (isOnline) "Available" else "Offline",
             isOnline = isOnline,
@@ -222,7 +239,7 @@ class UserRepository(
 
     private fun formatLastSeen(timestamp: Timestamp?, isOnline: Boolean): String {
         if (isOnline) return "Online"
-        if (timestamp == null) return "Active recently"
+        if (timestamp == null) return "Offline"
         val diffMs = System.currentTimeMillis() - timestamp.toDate().time
         val minutes = diffMs / (1000 * 60)
         return when {

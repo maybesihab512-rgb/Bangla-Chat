@@ -1,13 +1,21 @@
 package com.example.ui.viewmodel
 
+import android.net.Uri
+import android.util.Base64
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.CipherAppContainer
+import com.example.data.audio.AudioPlaybackManager
+import com.example.data.audio.AudioRecordManager
 import com.example.data.repository.ChatRepository
 import com.example.data.repository.UserRepository
 import com.example.model.Conversation
 import com.example.model.Message
 import com.example.model.MessageType
 import com.example.model.User
+import com.google.firebase.storage.FirebaseStorage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,6 +25,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
+import java.io.File
 
 enum class ChatFilter {
     ALL,
@@ -27,7 +38,9 @@ enum class ChatFilter {
 
 class ChatViewModel(
     private val chatRepository: ChatRepository,
-    private val userRepository: UserRepository
+    private val userRepository: UserRepository,
+    val audioRecordManager: AudioRecordManager = CipherAppContainer.audioRecordManager,
+    val audioPlaybackManager: AudioPlaybackManager = CipherAppContainer.audioPlaybackManager
 ) : ViewModel() {
 
     private val _searchQuery = MutableStateFlow("")
@@ -175,7 +188,8 @@ class ChatViewModel(
         type: MessageType = MessageType.TEXT,
         mediaFileName: String = "",
         mediaFileSize: String = "",
-        mediaDuration: Int = 0
+        mediaDuration: Int = 0,
+        mediaUrl: String = ""
     ) {
         if (content.isBlank() && type == MessageType.TEXT) return
 
@@ -186,43 +200,93 @@ class ChatViewModel(
             replyTo = _replyingTo.value,
             mediaFileName = mediaFileName,
             mediaFileSize = mediaFileSize,
-            mediaDuration = mediaDuration
+            mediaDuration = mediaDuration,
+            mediaUrl = mediaUrl
         )
         _replyingTo.value = null
         chatRepository.setTyping(conversationId, false)
     }
 
-    fun startVoiceRecording() {
-        _isRecordingAudio.value = true
-        _audioRecordingSeconds.value = 0
-        viewModelScope.launch {
-            while (_isRecordingAudio.value) {
-                delay(1000)
-                if (_isRecordingAudio.value) {
-                    _audioRecordingSeconds.value += 1
+    fun startVoiceRecording(): Boolean {
+        val result = audioRecordManager.startRecording()
+        if (result.isSuccess) {
+            _isRecordingAudio.value = true
+            _audioRecordingSeconds.value = 0
+            viewModelScope.launch {
+                while (_isRecordingAudio.value) {
+                    delay(1000)
+                    if (_isRecordingAudio.value) {
+                        _audioRecordingSeconds.value += 1
+                    }
                 }
             }
+            return true
+        } else {
+            Log.e("ChatViewModel", "Could not start audio recording: ${result.exceptionOrNull()?.message}")
+            return false
         }
     }
 
     fun stopVoiceRecordingAndSend(conversationId: String) {
-        val duration = _audioRecordingSeconds.value
+        val timerDuration = _audioRecordingSeconds.value
         _isRecordingAudio.value = false
-        if (duration > 0) {
-            sendMessage(
-                conversationId = conversationId,
-                content = "Encrypted voice memo ($duration sec)",
-                type = MessageType.AUDIO,
-                mediaDuration = duration,
-                mediaFileSize = "${duration * 12} KB (Opus adaptive)"
-            )
-        }
         _audioRecordingSeconds.value = 0
+
+        val stopResult = audioRecordManager.stopRecording()
+        if (stopResult.isSuccess) {
+            val (file, recordedSec) = stopResult.getOrThrow()
+            val duration = if (recordedSec > 0) recordedSec else timerDuration.coerceAtLeast(1)
+
+            viewModelScope.launch {
+                var finalMediaUrl = ""
+                try {
+                    val storage = FirebaseStorage.getInstance()
+                    val storageRef = storage.reference.child("voice_messages/$conversationId/${file.name}")
+                    storageRef.putFile(Uri.fromFile(file)).await()
+                    finalMediaUrl = storageRef.downloadUrl.await().toString()
+                    Log.i("ChatViewModel", "Uploaded voice recording to Firebase Storage: $finalMediaUrl")
+                } catch (e: Exception) {
+                    Log.w("ChatViewModel", "Firebase Storage upload error, falling back to data URL", e)
+                    try {
+                        withContext(Dispatchers.IO) {
+                            val bytes = file.readBytes()
+                            val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                            finalMediaUrl = "data:audio/mp4;base64,$base64"
+                        }
+                    } catch (ex: Exception) {
+                        Log.e("ChatViewModel", "Error reading audio bytes", ex)
+                        finalMediaUrl = file.absolutePath
+                    }
+                }
+
+                val sizeKb = (file.length() / 1024).coerceAtLeast(1)
+                sendMessage(
+                    conversationId = conversationId,
+                    content = "Voice memo (${duration}s)",
+                    type = MessageType.AUDIO,
+                    mediaFileName = file.name,
+                    mediaFileSize = "$sizeKb KB (AAC)",
+                    mediaDuration = duration,
+                    mediaUrl = finalMediaUrl
+                )
+            }
+        } else {
+            Log.w("ChatViewModel", "Audio recording failed or file was empty: ${stopResult.exceptionOrNull()?.message}")
+        }
     }
 
     fun cancelVoiceRecording() {
         _isRecordingAudio.value = false
         _audioRecordingSeconds.value = 0
+        audioRecordManager.cancelRecording()
+    }
+
+    fun playAudio(messageId: String, mediaUrl: String) {
+        audioPlaybackManager.playOrToggle(messageId, mediaUrl)
+    }
+
+    fun stopAudio() {
+        audioPlaybackManager.stop()
     }
 
     fun deleteMessage(conversationId: String, messageId: String, forEveryone: Boolean) {
@@ -231,5 +295,11 @@ class ChatViewModel(
 
     fun startChatWithContact(user: User): String {
         return chatRepository.createConversationWithUser(user)
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        audioRecordManager.release()
+        audioPlaybackManager.release()
     }
 }

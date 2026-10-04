@@ -316,6 +316,7 @@ fun CipherNavHost(
                         CallsScreen(
                             viewModel = callViewModel,
                             onNavigateBack = { currentDestination = AppDestination.Dashboard },
+                            onNewCallClick = { navigateTo(AppDestination.Contacts) },
                             onStartCall = { contactId, isVideo ->
                                 callViewModel.startCallById(contactId, isVideo)
                                 navigateTo(AppDestination.ActiveCall(contactId, isVideo))

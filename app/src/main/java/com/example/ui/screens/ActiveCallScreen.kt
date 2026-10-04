@@ -1,5 +1,10 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.util.Log
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -43,8 +48,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,14 +59,17 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.example.data.calling.ActiveCallSession
 import com.example.model.CallType
 import com.example.model.ConnectionState
 import com.example.ui.components.AvatarWithStatus
+import com.example.ui.components.CallStatusOverlay
 import com.example.ui.components.CyberBadge
 import com.example.ui.components.CyberCard
 import com.example.ui.components.NetworkQualityBadge
@@ -103,6 +113,32 @@ fun ActiveCallScreen(
     }
 
     val active = session!!
+    val context = LocalContext.current
+    val permissionsToRequest = remember(active.callType) {
+        if (active.callType == CallType.VIDEO) {
+            arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA)
+        } else {
+            arrayOf(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+    val callPermissionsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val micGranted = permissions[Manifest.permission.RECORD_AUDIO] ?: false
+        if (!micGranted) {
+            Log.w("ActiveCallScreen", "Microphone permission denied")
+        }
+    }
+
+    LaunchedEffect(active.callType) {
+        val hasAll = permissionsToRequest.all {
+            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+        }
+        if (!hasAll) {
+            callPermissionsLauncher.launch(permissionsToRequest)
+        }
+    }
+
     val isVideo = active.callType == CallType.VIDEO && !active.isVideoMuted
 
     val durationText = String.format(
@@ -197,7 +233,17 @@ fun ActiveCallScreen(
                 NetworkQualityBadge(metrics = active.metrics)
             }
 
-            Spacer(modifier = Modifier.height(30.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Real-time WebRTC Connection Strength (Ping & Packet Loss) Overlay
+            CallStatusOverlay(
+                metrics = active.metrics,
+                connectionState = active.connectionState,
+                isVideoCall = isVideo,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
 
             if (!isVideo) {
                 // Audio Avatar with futuristic pulse

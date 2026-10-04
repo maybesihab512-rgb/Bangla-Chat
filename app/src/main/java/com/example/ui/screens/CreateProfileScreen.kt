@@ -74,8 +74,8 @@ fun CreateProfileScreen(
     onSaveProfile: (name: String, handle: String, status: String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var displayName by remember { mutableStateOf(currentUser?.name ?: "Maybe Sihab") }
-    var handle by remember { mutableStateOf(currentUser?.handle ?: "sihab") }
+    var displayName by remember { mutableStateOf(currentUser?.name ?: "") }
+    var handle by remember { mutableStateOf(currentUser?.handle ?: "") }
     var statusMessage by remember { mutableStateOf(currentUser?.statusMessage ?: "Available") }
     var selectedColorHex by remember { mutableLongStateOf(currentUser?.avatarColorHex ?: 0xFF00F0FF) }
     var isError by remember { mutableStateOf(false) }
@@ -170,7 +170,7 @@ fun CreateProfileScreen(
                             isError = false
                         },
                         label = "Display Name",
-                        placeholder = "e.g., Alex Vance",
+                        placeholder = "Your full name",
                         leadingIcon = {
                             Icon(Icons.Default.Person, contentDescription = null, tint = CyberNeonCyan, modifier = Modifier.size(18.dp))
                         },
@@ -184,7 +184,7 @@ fun CreateProfileScreen(
                             handle = it.filter { char -> char.isLetterOrDigit() || char == '_' }
                         },
                         label = "Username",
-                        placeholder = "e.g., sihab512",
+                        placeholder = "username",
                         leadingIcon = {
                             Icon(Icons.Default.AlternateEmail, contentDescription = null, tint = CyberNeonCyan, modifier = Modifier.size(18.dp))
                         }

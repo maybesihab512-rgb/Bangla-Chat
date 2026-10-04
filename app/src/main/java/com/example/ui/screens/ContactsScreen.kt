@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,6 +28,7 @@ import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -37,15 +39,17 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,20 +58,19 @@ import androidx.compose.ui.unit.sp
 import com.example.data.repository.UserRepository
 import com.example.model.User
 import com.example.ui.components.AvatarWithStatus
-import com.example.ui.components.CyberBadge
 import com.example.ui.components.CyberCard
 import com.example.ui.components.CyberTextField
-import com.example.ui.theme.CyberBgCard
 import com.example.ui.theme.CyberBgDark
 import com.example.ui.theme.CyberBgSurface
 import com.example.ui.theme.CyberBgSurfaceElevated
-import com.example.ui.theme.CyberBorderGlow
 import com.example.ui.theme.CyberBorderSubtle
 import com.example.ui.theme.CyberElectricEmerald
 import com.example.ui.theme.CyberNeonCyan
 import com.example.ui.theme.CyberTextMuted
 import com.example.ui.theme.CyberTextPrimary
 import com.example.ui.theme.CyberTextSecondary
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun ContactsScreen(
@@ -80,11 +83,26 @@ fun ContactsScreen(
     val contacts by userRepository.contacts.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
     var showAddContactDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
-    var newContactName by remember { mutableStateOf("") }
-    var newContactPhone by remember { mutableStateOf("") }
+    var remoteSearchResults by remember { mutableStateOf<List<User>>(emptyList()) }
+    var isSearchingRemote by remember { mutableStateOf(false) }
 
-    val filteredContacts = remember(contacts, searchQuery) {
+    // Real search across Firebase registered users when query changes
+    LaunchedEffect(searchQuery) {
+        if (searchQuery.isNotBlank()) {
+            isSearchingRemote = true
+            delay(300) // Debounce
+            remoteSearchResults = userRepository.searchUsers(searchQuery)
+            isSearchingRemote = false
+        } else {
+            remoteSearchResults = emptyList()
+            isSearchingRemote = false
+        }
+    }
+
+    val filteredLocalContacts = remember(contacts, searchQuery) {
         if (searchQuery.isBlank()) contacts
         else contacts.filter {
             it.name.contains(searchQuery, ignoreCase = true) ||
@@ -105,7 +123,7 @@ fun ContactsScreen(
             ) {
                 Icon(
                     imageVector = Icons.Default.PersonAdd,
-                    contentDescription = "Add Contact",
+                    contentDescription = "Find & Add User",
                     modifier = Modifier.size(24.dp)
                 )
             }
@@ -151,7 +169,7 @@ fun ContactsScreen(
                         color = CyberTextPrimary
                     )
                     Text(
-                        text = "${contacts.size} Contacts",
+                        text = "${contacts.size} Registered Contacts",
                         style = MaterialTheme.typography.bodySmall,
                         color = CyberElectricEmerald,
                         fontSize = 11.sp
@@ -166,10 +184,19 @@ fun ContactsScreen(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
                 placeholder = {
-                    Text("Search contacts by name, username or phone...", color = CyberTextMuted, fontSize = 13.sp)
+                    Text("Search users by name or phone...", color = CyberTextMuted, fontSize = 13.sp)
                 },
                 leadingIcon = {
                     Icon(Icons.Default.Search, contentDescription = null, tint = CyberNeonCyan, modifier = Modifier.size(18.dp))
+                },
+                trailingIcon = {
+                    if (isSearchingRemote) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = CyberNeonCyan
+                        )
+                    }
                 },
                 shape = RoundedCornerShape(12.dp),
                 colors = OutlinedTextFieldDefaults.colors(
@@ -187,19 +214,78 @@ fun ContactsScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Contacts list
+            // Contacts / Search Results list
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxSize()
             ) {
-                items(filteredContacts) { contact ->
-                    ContactCard(
-                        contact = contact,
-                        onChatClick = { onStartChat(contact) },
-                        onAudioCallClick = { onStartCall(contact, false) },
-                        onVideoCallClick = { onStartCall(contact, true) }
-                    )
+                // If searching, show Firebase registered user search results
+                if (searchQuery.isNotBlank()) {
+                    val combinedList = (filteredLocalContacts + remoteSearchResults).distinctBy { it.id }
+
+                    if (combinedList.isEmpty() && !isSearchingRemote) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 40.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "No registered users found matching \"$searchQuery\"",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 12.sp,
+                                    color = CyberTextMuted
+                                )
+                            }
+                        }
+                    } else {
+                        items(combinedList) { contact ->
+                            ContactCard(
+                                contact = contact,
+                                onChatClick = { onStartChat(contact) },
+                                onAudioCallClick = { onStartCall(contact, false) },
+                                onVideoCallClick = { onStartCall(contact, true) }
+                            )
+                        }
+                    }
+                } else {
+                    if (contacts.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 40.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(
+                                        text = "No contacts yet",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 13.sp,
+                                        color = CyberTextMuted
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = "Search users above or tap '+' to find registered users",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = CyberTextSecondary
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        items(filteredLocalContacts) { contact ->
+                            ContactCard(
+                                contact = contact,
+                                onChatClick = { onStartChat(contact) },
+                                onAudioCallClick = { onStartCall(contact, false) },
+                                onVideoCallClick = { onStartCall(contact, true) }
+                            )
+                        }
+                    }
                 }
+
                 item {
                     Spacer(modifier = Modifier.height(80.dp))
                 }
@@ -207,13 +293,17 @@ fun ContactsScreen(
         }
     }
 
-    // Add Contact Dialog
+    // Add Contact Dialog: Search real Firebase users by name or phone
     if (showAddContactDialog) {
+        var addSearchQuery by remember { mutableStateOf("") }
+        var addSearchResults by remember { mutableStateOf<List<User>>(emptyList()) }
+        var isSearchingAdd by remember { mutableStateOf(false) }
+
         AlertDialog(
             onDismissRequest = { showAddContactDialog = false },
             title = {
                 Text(
-                    text = "ADD CONTACT",
+                    text = "FIND & ADD USER",
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
@@ -222,37 +312,113 @@ fun ContactsScreen(
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    CyberTextField(
-                        value = newContactName,
-                        onValueChange = { newContactName = it },
-                        label = "Contact Name",
-                        placeholder = "e.g., John Reese"
+                    Text(
+                        text = "Search registered users by display name or phone number",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = CyberTextSecondary,
+                        fontSize = 12.sp
                     )
+
                     CyberTextField(
-                        value = newContactPhone,
-                        onValueChange = { newContactPhone = it },
-                        label = "Phone or Username",
-                        placeholder = "+1 555-019-9922"
+                        value = addSearchQuery,
+                        onValueChange = {
+                            addSearchQuery = it
+                            if (it.isNotBlank()) {
+                                isSearchingAdd = true
+                                scope.launch {
+                                    delay(250)
+                                    addSearchResults = userRepository.searchUsers(it)
+                                    isSearchingAdd = false
+                                }
+                            } else {
+                                addSearchResults = emptyList()
+                            }
+                        },
+                        label = "Search User",
+                        placeholder = "Name or phone number"
                     )
+
+                    if (isSearchingAdd) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                            modifier = Modifier.fillMaxWidth().padding(8.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = CyberNeonCyan)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Searching Firebase...", fontSize = 11.sp, color = CyberTextMuted)
+                        }
+                    }
+
+                    if (addSearchResults.isNotEmpty()) {
+                        Text(
+                            text = "REGISTERED USERS (${addSearchResults.size})",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            color = CyberNeonCyan
+                        )
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth().height(180.dp)
+                        ) {
+                            items(addSearchResults) { foundUser ->
+                                CyberCard(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    onClick = {
+                                        userRepository.addContact(foundUser)
+                                        Toast.makeText(context, "${foundUser.name} added to contacts", Toast.LENGTH_SHORT).show()
+                                        showAddContactDialog = false
+                                    },
+                                    cornerRadius = 8.dp
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        AvatarWithStatus(
+                                            initials = foundUser.avatarInitials,
+                                            photoUrl = foundUser.photoUrl,
+                                            size = 36.dp,
+                                            isOnline = foundUser.isOnline
+                                        )
+                                        Spacer(modifier = Modifier.width(10.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = foundUser.name,
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp,
+                                                color = CyberTextPrimary
+                                            )
+                                            Text(
+                                                text = if (foundUser.phone.isNotBlank()) foundUser.phone else "@${foundUser.handle}",
+                                                fontSize = 11.sp,
+                                                color = CyberTextSecondary
+                                            )
+                                        }
+                                        Text(
+                                            text = "+ Add",
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp,
+                                            color = CyberElectricEmerald
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else if (addSearchQuery.isNotBlank() && !isSearchingAdd) {
+                        Text(
+                            text = "No registered user found with that name or number",
+                            fontSize = 12.sp,
+                            color = CyberTextMuted,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    }
                 }
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        if (newContactName.isNotBlank()) {
-                            userRepository.addContact(newContactName.trim(), newContactPhone.trim())
-                            newContactName = ""
-                            newContactPhone = ""
-                            showAddContactDialog = false
-                        }
-                    }
-                ) {
-                    Text("Add Contact", color = CyberElectricEmerald, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
                 TextButton(onClick = { showAddContactDialog = false }) {
-                    Text("Cancel", color = CyberTextMuted)
+                    Text("Close", color = CyberTextMuted)
                 }
             },
             containerColor = CyberBgSurface
@@ -277,6 +443,7 @@ private fun ContactCard(
         ) {
             AvatarWithStatus(
                 initials = contact.avatarInitials,
+                photoUrl = contact.photoUrl,
                 colorHex = contact.avatarColorHex,
                 size = 46.dp,
                 isOnline = contact.isOnline,
@@ -295,7 +462,7 @@ private fun ContactCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "@${contact.handle} • ${contact.lastSeenText}",
+                    text = if (contact.phone.isNotBlank()) "${contact.phone} • ${contact.lastSeenText}" else "@${contact.handle} • ${contact.lastSeenText}",
                     style = MaterialTheme.typography.bodySmall,
                     color = if (contact.isOnline) CyberElectricEmerald else CyberTextSecondary,
                     fontSize = 11.sp

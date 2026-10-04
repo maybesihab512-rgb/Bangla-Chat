@@ -55,6 +55,7 @@ service cloud.firestore {
              (!('mediaFileName' in data) || data.mediaFileName is string) &&
              (!('mediaFileSize' in data) || data.mediaFileSize is string) &&
              (!('mediaDuration' in data) || data.mediaDuration is int) &&
+             (!('mediaUrl' in data) || data.mediaUrl is string) &&
              (!('createdAt' in data) || data.createdAt is timestamp) &&
              (!('deliveredAt' in data) || data.deliveredAt is timestamp) &&
              (!('seenAt' in data) || data.seenAt is timestamp);

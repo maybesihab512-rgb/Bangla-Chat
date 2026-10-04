@@ -1,12 +1,15 @@
 package com.example.ui.viewmodel
 
 import android.app.Activity
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.repository.AuthRepository
 import com.example.data.repository.AuthStatus
 import com.example.model.User
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class AuthViewModel(
@@ -15,6 +18,12 @@ class AuthViewModel(
 
     val authStatus: StateFlow<AuthStatus> = authRepository.authStatus
     val currentUser: StateFlow<User?> = authRepository.currentUser
+
+    private val _isUpdatingProfile = MutableStateFlow(false)
+    val isUpdatingProfile: StateFlow<Boolean> = _isUpdatingProfile.asStateFlow()
+
+    private val _profileUpdateError = MutableStateFlow<String?>(null)
+    val profileUpdateError: StateFlow<String?> = _profileUpdateError.asStateFlow()
 
     fun attemptAutoSignIn(activity: Activity, onComplete: () -> Unit = {}) {
         authRepository.attemptAutoSignIn(activity, onComplete)
@@ -46,8 +55,35 @@ class AuthViewModel(
         return authRepository.verifyOtp(code, phoneNumber, onSuccess, onError)
     }
 
-    fun completeProfile(name: String, handle: String, status: String) {
-        authRepository.completeProfile(name, handle, status)
+    fun completeProfile(name: String, handle: String, status: String, phone: String = "", photoUrl: String = "") {
+        authRepository.completeProfile(name, handle, status, phone, photoUrl)
+    }
+
+    fun updateProfile(
+        displayName: String,
+        phoneNumber: String,
+        photoUri: Uri?,
+        statusMessage: String,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            _isUpdatingProfile.value = true
+            _profileUpdateError.value = null
+            val result = authRepository.updateProfile(displayName, phoneNumber, photoUri, statusMessage)
+            _isUpdatingProfile.value = false
+            result.onSuccess {
+                onSuccess()
+            }.onFailure { err ->
+                val msg = err.localizedMessage ?: "Failed to update profile"
+                _profileUpdateError.value = msg
+                onError(msg)
+            }
+        }
+    }
+
+    fun updatePresence(isOnline: Boolean) {
+        authRepository.updatePresence(isOnline)
     }
 
     fun logOut(activity: Activity? = null) {

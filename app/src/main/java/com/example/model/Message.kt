@@ -30,6 +30,7 @@ data class Message(
     val mediaDurationSeconds: Int = 0,
     val mediaFileSize: String = "",
     val mediaFileName: String = "",
+    val mediaUrl: String = "",
     val isDeleted: Boolean = false,
     val isEncrypted: Boolean = true
 )

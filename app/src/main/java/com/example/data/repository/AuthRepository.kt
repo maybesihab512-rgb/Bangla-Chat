@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import android.app.Activity
 import android.content.Context
+import android.net.Uri
 import android.util.Log
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
@@ -25,16 +26,21 @@ import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.PhoneAuthCredential
 import com.google.firebase.auth.PhoneAuthOptions
 import com.google.firebase.auth.PhoneAuthProvider
+import com.google.firebase.auth.UserProfileChangeRequest
 import com.google.firebase.auth.auth
 import java.util.concurrent.TimeUnit
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
+import com.google.firebase.storage.FirebaseStorage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
@@ -72,6 +78,8 @@ class AuthRepository(
             _currentUser.value = user
             _authStatus.value = AuthStatus.Success(user)
             syncUserProfileToFirestore(user)
+            fetchRemoteProfileAndMerge(user.id)
+            updatePresence(true)
         } else {
             _currentUser.value = null
             _authStatus.value = AuthStatus.Idle
@@ -84,26 +92,58 @@ class AuthRepository(
                 _currentUser.value = user
                 _authStatus.value = AuthStatus.Success(user)
                 syncUserProfileToFirestore(user)
+                fetchRemoteProfileAndMerge(user.id)
+                updatePresence(true)
             } else {
+                updatePresence(false)
                 _currentUser.value = null
                 _authStatus.value = AuthStatus.Idle
             }
         }
     }
 
+    private fun fetchRemoteProfileAndMerge(uid: String) {
+        scope.launch {
+            try {
+                val doc = db.collection("users").document(uid).get().await()
+                if (doc.exists()) {
+                    val fu = doc.toObject(FirestoreUser::class.java)
+                    if (fu != null) {
+                        val current = _currentUser.value ?: return@launch
+                        val savedPhoto = fu.profilePhoto
+                        val isPhotoUrl = savedPhoto.startsWith("http://") || savedPhoto.startsWith("https://") || savedPhoto.startsWith("content://")
+                        val merged = current.copy(
+                            name = fu.displayName.ifBlank { current.name },
+                            handle = fu.username.ifBlank { current.handle },
+                            phone = fu.phoneNumber.ifBlank { current.phone },
+                            photoUrl = if (isPhotoUrl) savedPhoto else current.photoUrl,
+                            avatarInitials = if (!isPhotoUrl && savedPhoto.isNotBlank()) savedPhoto else current.avatarInitials
+                        )
+                        _currentUser.value = merged
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("Auth", "Could not fetch existing remote profile", e)
+            }
+        }
+    }
+
     fun mapFirebaseUser(firebaseUser: FirebaseUser): User {
-        val name = firebaseUser.displayName?.ifBlank { "Alex Vance" } ?: "Alex Vance"
         val email = firebaseUser.email ?: ""
-        val handle = if (email.isNotEmpty()) email.substringBefore("@").replace(".", "_") else "user_${firebaseUser.uid.take(4)}"
-        val initials = name.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("").ifEmpty { "AV" }
+        val emailPrefix = if (email.isNotEmpty()) email.substringBefore("@") else "User"
+        val name = firebaseUser.displayName?.ifBlank { emailPrefix } ?: emailPrefix
+        val handle = if (email.isNotEmpty()) emailPrefix.replace(".", "_") else "user_${firebaseUser.uid.take(4)}"
+        val initials = name.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("").ifEmpty { "U" }
+        val photoUrl = firebaseUser.photoUrl?.toString() ?: ""
         return User(
             id = firebaseUser.uid,
             name = name,
             handle = handle,
             email = email,
             phone = firebaseUser.phoneNumber ?: "",
+            photoUrl = photoUrl,
             avatarInitials = initials.uppercase(),
-            avatarColorHex = 0xFF00F0FF,
+            avatarColorHex = if (firebaseUser.uid.hashCode() % 2 == 0) 0xFF00F0FF else 0xFF00E699,
             statusMessage = "Available",
             isOnline = true,
             lastSeenText = "Online",
@@ -121,7 +161,7 @@ class AuthRepository(
                     "userId" to user.id,
                     "displayName" to user.name,
                     "username" to user.handle,
-                    "profilePhoto" to user.avatarInitials,
+                    "profilePhoto" to user.photoUrl.ifEmpty { user.avatarInitials },
                     "phoneNumber" to user.phone,
                     "email" to user.email,
                     "onlineStatus" to if (user.isOnline) "online" else "offline",
@@ -350,30 +390,136 @@ class AuthRepository(
         return true
     }
 
-    fun completeProfile(name: String, handle: String, status: String) {
+    fun completeProfile(name: String, handle: String, status: String, phone: String = "", photoUrl: String = "") {
         val current = _currentUser.value ?: return
-        val initials = name.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("").ifEmpty { "ME" }
+        val initials = name.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("").ifEmpty { "U" }
         val updated = current.copy(
             name = name,
             handle = handle.removePrefix("@"),
             statusMessage = status,
-            avatarInitials = initials
+            phone = phone.ifEmpty { current.phone },
+            photoUrl = photoUrl.ifEmpty { current.photoUrl },
+            avatarInitials = initials.uppercase()
         )
         _currentUser.value = updated
         _authStatus.value = AuthStatus.Success(updated)
         syncUserProfileToFirestore(updated)
     }
 
+    suspend fun updateProfile(
+        displayName: String,
+        phoneNumber: String,
+        photoUri: Uri?,
+        statusMessage: String
+    ): Result<User> {
+        val currentUid = auth.currentUser?.uid ?: return Result.failure(IllegalStateException("User not logged in"))
+        val current = _currentUser.value ?: return Result.failure(IllegalStateException("No current user"))
+
+        return try {
+            var uploadedPhotoUrl = current.photoUrl
+            if (photoUri != null) {
+                val storageRef = FirebaseStorage.getInstance().reference
+                    .child("profile_photos")
+                    .child(currentUid)
+                    .child("${System.currentTimeMillis()}.jpg")
+                val uploadTask = storageRef.putFile(photoUri).await()
+                uploadedPhotoUrl = uploadTask.storage.downloadUrl.await().toString()
+            }
+
+            val cleanName = displayName.trim().ifEmpty { current.name }
+            val cleanPhone = phoneNumber.trim()
+            val initials = cleanName.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("").ifEmpty { "U" }
+
+            val updatedUser = current.copy(
+                name = cleanName,
+                phone = cleanPhone,
+                photoUrl = uploadedPhotoUrl,
+                avatarInitials = initials.uppercase(),
+                statusMessage = statusMessage.trim().ifEmpty { "Available" }
+            )
+
+            // Update Firebase Auth profile
+            try {
+                val profileUpdates = UserProfileChangeRequest.Builder()
+                    .setDisplayName(cleanName)
+                    .apply {
+                        if (uploadedPhotoUrl.isNotBlank()) {
+                            setPhotoUri(Uri.parse(uploadedPhotoUrl))
+                        }
+                    }
+                    .build()
+                auth.currentUser?.updateProfile(profileUpdates)?.await()
+            } catch (e: Exception) {
+                Log.w("Auth", "Failed updating firebase auth profile", e)
+            }
+
+            // Update Firestore user doc
+            val data = hashMapOf(
+                "userId" to currentUid,
+                "displayName" to cleanName,
+                "username" to updatedUser.handle,
+                "profilePhoto" to uploadedPhotoUrl.ifEmpty { initials.uppercase() },
+                "phoneNumber" to cleanPhone,
+                "email" to updatedUser.email,
+                "onlineStatus" to if (updatedUser.isOnline) "online" else "offline",
+                "statusMessage" to updatedUser.statusMessage,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            db.collection("users").document(currentUid).set(data, SetOptions.merge()).await()
+
+            _currentUser.value = updatedUser
+            _authStatus.value = AuthStatus.Success(updatedUser)
+            Result.success(updatedUser)
+        } catch (e: Exception) {
+            Log.e("Auth", "Error updating profile", e)
+            Result.failure(e)
+        }
+    }
+
+    private var presenceHeartbeatJob: Job? = null
+
     fun updatePresence(isOnline: Boolean) {
         val uid = auth.currentUser?.uid ?: return
-        scope.launch {
-            try {
-                db.collection("users").document(uid).update(
-                    "onlineStatus", if (isOnline) "online" else "offline",
-                    "lastSeen", FieldValue.serverTimestamp()
-                ).await()
-            } catch (e: Exception) {
-                // Ignore transient network errors during presence updates
+        presenceHeartbeatJob?.cancel()
+
+        if (isOnline) {
+            // Write online immediately with server timestamp
+            scope.launch {
+                try {
+                    db.collection("users").document(uid).update(
+                        "onlineStatus", "online",
+                        "lastSeen", FieldValue.serverTimestamp()
+                    ).await()
+                } catch (e: Exception) {
+                    // Ignore transient network errors
+                }
+            }
+
+            // Start heartbeat job updating lastSeen every 30 seconds
+            presenceHeartbeatJob = scope.launch {
+                while (isActive) {
+                    delay(30_000)
+                    try {
+                        db.collection("users").document(uid).update(
+                            "onlineStatus", "online",
+                            "lastSeen", FieldValue.serverTimestamp()
+                        ).await()
+                    } catch (e: Exception) {
+                        // Ignore transient network errors
+                    }
+                }
+            }
+        } else {
+            // Write offline immediately
+            scope.launch {
+                try {
+                    db.collection("users").document(uid).update(
+                        "onlineStatus", "offline",
+                        "lastSeen", FieldValue.serverTimestamp()
+                    ).await()
+                } catch (e: Exception) {
+                    // Ignore transient network errors
+                }
             }
         }
     }

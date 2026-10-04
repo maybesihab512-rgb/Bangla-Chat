@@ -28,4 +28,31 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onStart() {
+        super.onStart()
+        try {
+            CipherAppContainer.getInstance().authRepository.updatePresence(true)
+        } catch (e: Exception) {
+            // Ignore if container not yet ready
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        try {
+            CipherAppContainer.getInstance().authRepository.updatePresence(false)
+        } catch (e: Exception) {
+            // Ignore
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        try {
+            CipherAppContainer.getInstance().authRepository.updatePresence(false)
+        } catch (e: Exception) {
+            // Ignore
+        }
+    }
 }

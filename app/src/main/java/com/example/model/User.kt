@@ -7,6 +7,7 @@ data class User(
     val phone: String = "",
     val email: String = "",
     val avatarInitials: String = "",
+    val photoUrl: String = "",
     val avatarColorHex: Long = 0xFF00F0FF,
     val statusMessage: String = "Available",
     val isOnline: Boolean = true,

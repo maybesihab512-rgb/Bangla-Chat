@@ -1,5 +1,9 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
@@ -46,6 +50,7 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
@@ -57,6 +62,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -66,6 +72,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -78,11 +85,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.example.model.Message
 import com.example.model.MessageType
 import com.example.ui.components.AvatarWithStatus
@@ -122,6 +131,25 @@ fun ChatDetailScreen(
     val recordingSeconds by viewModel.audioRecordingSeconds.collectAsState()
     val isTypingFlow = remember(conversationId) { viewModel.observeTypingForConversation(conversationId) }
     val isTyping by isTypingFlow.collectAsState()
+
+    val context = LocalContext.current
+    val playingMessageId by viewModel.audioPlaybackManager.currentPlayingMessageId.collectAsState()
+    val isPlayingAudio by viewModel.audioPlaybackManager.isPlaying.collectAsState()
+    val audioProgress by viewModel.audioPlaybackManager.progress.collectAsState()
+
+    val audioPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            viewModel.startVoiceRecording()
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.stopAudio()
+        }
+    }
 
     var textInput by remember { mutableStateOf("") }
     var showAttachmentSheet by remember { mutableStateOf(false) }
@@ -305,6 +333,10 @@ fun ChatDetailScreen(
             items(displayMessages) { msg ->
                 MessageBubble(
                     message = msg,
+                    isAudioPlaying = isPlayingAudio && playingMessageId == msg.id,
+                    isAudioActive = playingMessageId == msg.id,
+                    audioProgress = if (playingMessageId == msg.id) audioProgress else 0f,
+                    onPlayAudio = { audioUrl -> viewModel.playAudio(msg.id, audioUrl) },
                     onLongClick = { selectedMessageForAction = msg },
                     onReply = { viewModel.setReplyingTo(msg) }
                 )
@@ -483,7 +515,17 @@ fun ChatDetailScreen(
                         }
                     } else {
                         IconButton(
-                            onClick = { viewModel.startVoiceRecording() },
+                            onClick = {
+                                val hasMicPermission = ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.RECORD_AUDIO
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (hasMicPermission) {
+                                    viewModel.startVoiceRecording()
+                                } else {
+                                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            },
                             modifier = Modifier
                                 .size(42.dp)
                                 .clip(CircleShape)
@@ -749,6 +791,10 @@ fun ChatDetailScreen(
 @Composable
 private fun MessageBubble(
     message: Message,
+    isAudioPlaying: Boolean = false,
+    isAudioActive: Boolean = false,
+    audioProgress: Float = 0f,
+    onPlayAudio: (String) -> Unit = {},
     onLongClick: () -> Unit,
     onReply: () -> Unit
 ) {
@@ -829,28 +875,45 @@ private fun MessageBubble(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(36.dp)
+                                    .size(38.dp)
                                     .clip(CircleShape)
-                                    .background(CyberNeonCyan),
+                                    .background(if (isAudioPlaying) CyberCrimson else CyberNeonCyan)
+                                    .clickable {
+                                        val audioSource = message.mediaUrl.ifEmpty { message.mediaFileName }
+                                        onPlayAudio(audioSource)
+                                    },
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.PlayArrow,
-                                    contentDescription = "Play voice memo",
+                                    imageVector = if (isAudioPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (isAudioPlaying) "Pause voice memo" else "Play voice memo",
                                     tint = CyberBgDark,
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
                             Spacer(modifier = Modifier.width(10.dp))
-                            Column {
-                                Icon(
-                                    imageVector = Icons.Default.GraphicEq,
-                                    contentDescription = null,
-                                    tint = CyberNeonCyan,
-                                    modifier = Modifier.size(20.dp)
-                                )
+                            Column(modifier = Modifier.widthIn(min = 130.dp, max = 220.dp)) {
+                                if (isAudioActive) {
+                                    LinearProgressIndicator(
+                                        progress = { audioProgress },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(4.dp)
+                                            .clip(RoundedCornerShape(2.dp)),
+                                        color = CyberNeonCyan,
+                                        trackColor = CyberBorderSubtle
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.GraphicEq,
+                                        contentDescription = null,
+                                        tint = CyberNeonCyan,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                                 Text(
-                                    text = "${message.mediaDurationSeconds}s • ${message.mediaFileSize.ifEmpty { "16kbps Opus" }}",
+                                    text = "${message.mediaDurationSeconds}s • ${message.mediaFileSize.ifEmpty { "Audio memo" }}",
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 10.sp,
                                     color = CyberTextSecondary

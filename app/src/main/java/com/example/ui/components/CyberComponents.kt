@@ -51,6 +51,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
@@ -58,6 +59,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.example.model.DeliveryStatus
 import com.example.model.NetworkQualityMetrics
 import com.example.model.NetworkTier
@@ -240,6 +242,7 @@ fun CyberBadge(
 fun AvatarWithStatus(
     initials: String,
     modifier: Modifier = Modifier,
+    photoUrl: String? = null,
     colorHex: Long = 0xFF00F0FF,
     size: Dp = 48.dp,
     isOnline: Boolean = false,
@@ -251,28 +254,46 @@ fun AvatarWithStatus(
         contentAlignment = Alignment.Center
     ) {
         // Avatar circle
-        Box(
-            modifier = Modifier
-                .size(size)
-                .clip(CircleShape)
-                .background(
-                    Brush.linearGradient(
-                        colors = listOf(
-                            baseColor.copy(alpha = 0.25f),
-                            CyberBgSurfaceElevated
+        if (!photoUrl.isNullOrBlank()) {
+            Box(
+                modifier = Modifier
+                    .size(size)
+                    .clip(CircleShape)
+                    .border(BorderStroke(1.5.dp, baseColor.copy(alpha = 0.8f)), CircleShape)
+            ) {
+                AsyncImage(
+                    model = photoUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(size)
+                        .clip(CircleShape)
+                )
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(size)
+                    .clip(CircleShape)
+                    .background(
+                        Brush.linearGradient(
+                            colors = listOf(
+                                baseColor.copy(alpha = 0.25f),
+                                CyberBgSurfaceElevated
+                            )
                         )
                     )
+                    .border(BorderStroke(1.5.dp, baseColor.copy(alpha = 0.6f)), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = initials.take(2).uppercase().ifEmpty { "U" },
+                    color = CyberTextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = (size.value * 0.38f).sp
                 )
-                .border(BorderStroke(1.5.dp, baseColor.copy(alpha = 0.6f)), CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = initials.take(2).uppercase(),
-                color = CyberTextPrimary,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                fontSize = (size.value * 0.38f).sp
-            )
+            }
         }
 
         // Online dot or shield

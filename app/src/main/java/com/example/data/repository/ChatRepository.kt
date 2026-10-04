@@ -282,7 +282,8 @@ class ChatRepository(
         replyTo: Message? = null,
         mediaDuration: Int = 0,
         mediaFileName: String = "",
-        mediaFileSize: String = ""
+        mediaFileSize: String = "",
+        mediaUrl: String = ""
     ) {
         val currentUserId = authRepository.currentUser.value?.id ?: return
         val currentConv = _conversations.value.find { it.id == conversationId }
@@ -307,7 +308,8 @@ class ChatRepository(
             replyToMessage = replyTo,
             mediaDurationSeconds = mediaDuration,
             mediaFileName = mediaFileName,
-            mediaFileSize = mediaFileSize
+            mediaFileSize = mediaFileSize,
+            mediaUrl = mediaUrl
         )
 
         val currentList = _messagesMap.value[conversationId] ?: emptyList()
@@ -333,6 +335,7 @@ class ChatRepository(
                         "mediaFileName" to mediaFileName,
                         "mediaFileSize" to mediaFileSize,
                         "mediaDuration" to mediaDuration,
+                        "mediaUrl" to mediaUrl,
                         "createdAt" to FieldValue.serverTimestamp()
                     )
 
@@ -576,6 +579,7 @@ class ChatRepository(
             mediaFileName = fm.mediaFileName,
             mediaFileSize = fm.mediaFileSize,
             mediaDurationSeconds = fm.mediaDuration,
+            mediaUrl = fm.mediaUrl,
             isDeleted = fm.messageText == "This message was deleted"
         )
     }

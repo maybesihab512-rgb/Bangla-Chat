@@ -108,9 +108,10 @@ fun DashboardScreen(
         item {
             Spacer(modifier = Modifier.height(8.dp))
             DashboardHeader(
-                userName = state.user?.name ?: "Alex Vance",
+                userName = state.user?.name ?: "User",
                 statusMessage = state.user?.statusMessage ?: "Online",
-                avatarInitials = state.user?.avatarInitials ?: "AV",
+                avatarInitials = state.user?.avatarInitials ?: "U",
+                photoUrl = state.user?.photoUrl,
                 avatarColorHex = state.user?.avatarColorHex ?: 0xFF00F0FF,
                 onProfileClick = onNavigateToProfile,
                 onSettingsClick = onNavigateToSettings
@@ -373,6 +374,7 @@ private fun DashboardHeader(
     statusMessage: String,
     avatarInitials: String,
     avatarColorHex: Long,
+    photoUrl: String? = null,
     onProfileClick: () -> Unit,
     onSettingsClick: () -> Unit
 ) {
@@ -389,6 +391,7 @@ private fun DashboardHeader(
         ) {
             AvatarWithStatus(
                 initials = avatarInitials,
+                photoUrl = photoUrl,
                 colorHex = avatarColorHex,
                 size = 46.dp,
                 isOnline = true

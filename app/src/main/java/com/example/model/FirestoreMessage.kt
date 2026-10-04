@@ -16,6 +16,7 @@ data class FirestoreMessage(
     val mediaFileName: String = "",
     val mediaFileSize: String = "",
     val mediaDuration: Int = 0,
+    val mediaUrl: String = "",
     val createdAt: Timestamp? = null,
     val deliveredAt: Timestamp? = null,
     val seenAt: Timestamp? = null

@@ -76,6 +76,7 @@ fun CallsScreen(
     viewModel: CallViewModel,
     onNavigateBack: () -> Unit,
     onStartCall: (contactId: String, isVideo: Boolean) -> Unit,
+    onNewCallClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val callList by viewModel.filteredCalls.collectAsState()
@@ -86,7 +87,7 @@ fun CallsScreen(
         containerColor = CyberBgDark,
         floatingActionButton = {
             FloatingActionButton(
-                onClick = { onStartCall("usr_001", false) },
+                onClick = onNewCallClick,
                 containerColor = CyberElectricEmerald,
                 contentColor = CyberBgDark,
                 shape = RoundedCornerShape(16.dp)
