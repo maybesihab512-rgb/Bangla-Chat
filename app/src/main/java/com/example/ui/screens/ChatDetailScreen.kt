@@ -1,8 +1,16 @@
 package com.example.ui.screens
 
 import android.Manifest
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.provider.OpenableColumns
+import android.widget.MediaController
+import android.widget.Toast
+import android.widget.VideoView
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
@@ -21,6 +29,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -57,6 +66,7 @@ import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -85,17 +95,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
+import coil.compose.SubcomposeAsyncImage
 import com.example.model.Message
 import com.example.model.MessageType
 import com.example.ui.components.AvatarWithStatus
 import com.example.ui.components.CyberBadge
+import com.example.ui.components.CyberOutlinedButton
 import com.example.ui.components.DeliveryTick
 import com.example.ui.theme.CyberAmber
 import com.example.ui.theme.CyberBgCard
@@ -111,6 +127,8 @@ import com.example.ui.theme.CyberTextMuted
 import com.example.ui.theme.CyberTextPrimary
 import com.example.ui.theme.CyberTextSecondary
 import com.example.ui.viewmodel.ChatViewModel
+import com.google.firebase.Firebase
+import com.google.firebase.auth.auth
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -142,6 +160,69 @@ fun ChatDetailScreen(
     ) { isGranted ->
         if (isGranted) {
             viewModel.startVoiceRecording()
+        }
+    }
+
+    val uploadProgress by viewModel.uploadProgress.collectAsState()
+    val isUploadingMedia by viewModel.isUploadingMedia.collectAsState()
+
+    var viewingImageUrl by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var viewingVideoUrl by remember { mutableStateOf<Pair<String, String>?>(null) }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val (name, sizeStr, mime) = queryFileMetadata(context, uri, "photo_${System.currentTimeMillis()}.jpg")
+            viewModel.uploadMedia(
+                conversationId = conversationId,
+                uri = uri,
+                type = MessageType.IMAGE,
+                fileName = name,
+                fileSize = sizeStr,
+                mimeType = mime.ifBlank { "image/jpeg" },
+                onError = { err ->
+                    Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                }
+            )
+        }
+    }
+
+    val videoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val (name, sizeStr, mime) = queryFileMetadata(context, uri, "video_${System.currentTimeMillis()}.mp4")
+            viewModel.uploadMedia(
+                conversationId = conversationId,
+                uri = uri,
+                type = MessageType.VIDEO,
+                fileName = name,
+                fileSize = sizeStr,
+                mimeType = mime.ifBlank { "video/mp4" },
+                onError = { err ->
+                    Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                }
+            )
+        }
+    }
+
+    val documentPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val (name, sizeStr, mime) = queryFileMetadata(context, uri, "document_${System.currentTimeMillis()}.bin")
+            viewModel.uploadMedia(
+                conversationId = conversationId,
+                uri = uri,
+                type = MessageType.FILE,
+                fileName = name,
+                fileSize = sizeStr,
+                mimeType = mime.ifBlank { "application/octet-stream" },
+                onError = { err ->
+                    Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                }
+            )
         }
     }
 
@@ -236,7 +317,15 @@ fun ChatDetailScreen(
                 }
 
                 // Call Actions
-                IconButton(onClick = { onStartAudioCall(conversation?.participantIds?.firstOrNull { it != "user_me" } ?: "usr_peer") }) {
+                val currentUid = Firebase.auth.currentUser?.uid ?: ""
+                val peerId = conversation?.participantIds?.firstOrNull { it != currentUid && it.isNotBlank() }
+                    ?: conversation?.participantIds?.firstOrNull() ?: ""
+
+                IconButton(onClick = {
+                    if (peerId.isNotBlank()) {
+                        onStartAudioCall(peerId)
+                    }
+                }) {
                     Icon(
                         imageVector = Icons.Default.Call,
                         contentDescription = "Voice Call",
@@ -245,7 +334,11 @@ fun ChatDetailScreen(
                     )
                 }
 
-                IconButton(onClick = { onStartVideoCall(conversation?.participantIds?.firstOrNull { it != "user_me" } ?: "usr_peer") }) {
+                IconButton(onClick = {
+                    if (peerId.isNotBlank()) {
+                        onStartVideoCall(peerId)
+                    }
+                }) {
                     Icon(
                         imageVector = Icons.Default.Videocam,
                         contentDescription = "Video Call",
@@ -336,6 +429,9 @@ fun ChatDetailScreen(
                     isAudioActive = playingMessageId == msg.id,
                     audioProgress = if (playingMessageId == msg.id) audioProgress else 0f,
                     onPlayAudio = { audioUrl -> viewModel.playAudio(msg.id, audioUrl) },
+                    onOpenImage = { url, caption -> viewingImageUrl = Pair(url, caption) },
+                    onOpenVideo = { url, title -> viewingVideoUrl = Pair(url, title) },
+                    onOpenFile = { url, name -> openDocumentUrl(context, url, name) },
                     onLongClick = { selectedMessageForAction = msg },
                     onReply = { viewModel.setReplyingTo(msg) }
                 )
@@ -396,6 +492,36 @@ fun ChatDetailScreen(
                             modifier = Modifier.size(16.dp)
                         )
                     }
+                }
+            }
+        }
+
+        // Media Upload Progress Banner
+        if (isUploadingMedia) {
+            Surface(
+                color = CyberBgSurfaceElevated,
+                border = BorderStroke(1.dp, CyberNeonCyan.copy(alpha = 0.5f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(
+                        progress = { (uploadProgress ?: 0) / 100f },
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = CyberNeonCyan,
+                        trackColor = CyberBorderSubtle
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "UPLOADING FILE ${uploadProgress ?: 0}%",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = CyberNeonCyan
+                    )
                 }
             }
         }
@@ -575,14 +701,10 @@ fun ChatDetailScreen(
                         label = "Photo",
                         color = CyberNeonCyan,
                         onClick = {
-                            viewModel.sendMessage(
-                                conversationId = conversationId,
-                                content = "Shared a photo",
-                                type = MessageType.IMAGE,
-                                mediaFileName = "photo_${System.currentTimeMillis() % 1000}.png",
-                                mediaFileSize = "620 KB"
-                            )
                             showAttachmentSheet = false
+                            photoPickerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
                         }
                     )
 
@@ -591,15 +713,10 @@ fun ChatDetailScreen(
                         label = "Video",
                         color = CyberElectricEmerald,
                         onClick = {
-                            viewModel.sendMessage(
-                                conversationId = conversationId,
-                                content = "Shared a video",
-                                type = MessageType.VIDEO,
-                                mediaFileName = "video_${System.currentTimeMillis() % 1000}.mp4",
-                                mediaFileSize = "2.4 MB",
-                                mediaDuration = 32
-                            )
                             showAttachmentSheet = false
+                            videoPickerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)
+                            )
                         }
                     )
 
@@ -608,19 +725,172 @@ fun ChatDetailScreen(
                         label = "Document",
                         color = CyberAmber,
                         onClick = {
-                            viewModel.sendMessage(
-                                conversationId = conversationId,
-                                content = "Shared a document",
-                                type = MessageType.FILE,
-                                mediaFileName = "document.pdf",
-                                mediaFileSize = "1.2 MB"
-                            )
                             showAttachmentSheet = false
+                            documentPickerLauncher.launch(arrayOf("*/*"))
                         }
                     )
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
+            }
+        }
+    }
+
+    // Full-Screen Image Viewer Dialog
+    if (viewingImageUrl != null) {
+        val (imgUrl, caption) = viewingImageUrl!!
+        Dialog(
+            onDismissRequest = { viewingImageUrl = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.95f))
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+            ) {
+                SubcomposeAsyncImage(
+                    model = imgUrl,
+                    contentDescription = "Full screen photo",
+                    contentScale = ContentScale.Fit,
+                    loading = {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = CyberNeonCyan)
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                        .align(Alignment.TopCenter),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = caption.ifBlank { "Photo" },
+                        color = CyberTextPrimary,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(
+                        onClick = { viewingImageUrl = null },
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(CyberBgSurface)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close photo",
+                            tint = CyberNeonCyan
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // Full-Screen In-App Video Player Dialog
+    if (viewingVideoUrl != null) {
+        val (videoUrl, videoTitle) = viewingVideoUrl!!
+        Dialog(
+            onDismissRequest = { viewingVideoUrl = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.95f))
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = videoTitle.ifBlank { "Video Player" },
+                            color = CyberTextPrimary,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(
+                            onClick = { viewingVideoUrl = null },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(CyberBgSurface)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close video",
+                                tint = CyberNeonCyan
+                            )
+                        }
+                    }
+
+                    AndroidView(
+                        factory = { ctx ->
+                            VideoView(ctx).apply {
+                                val mediaController = MediaController(ctx)
+                                mediaController.setAnchorView(this)
+                                setMediaController(mediaController)
+                                setVideoURI(Uri.parse(videoUrl))
+                                setOnPreparedListener { mp ->
+                                    mp.isLooping = false
+                                    start()
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        CyberOutlinedButton(
+                            text = "Open In System Player",
+                            onClick = {
+                                try {
+                                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                                        setDataAndType(Uri.parse(videoUrl), "video/*")
+                                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                    }
+                                    context.startActivity(intent)
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "No external video player found", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            icon = Icons.Default.PlayArrow,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
             }
         }
     }
@@ -794,6 +1064,9 @@ private fun MessageBubble(
     isAudioActive: Boolean = false,
     audioProgress: Float = 0f,
     onPlayAudio: (String) -> Unit = {},
+    onOpenImage: (String, String) -> Unit = { _, _ -> },
+    onOpenVideo: (String, String) -> Unit = { _, _ -> },
+    onOpenFile: (String, String) -> Unit = { _, _ -> },
     onLongClick: () -> Unit,
     onReply: () -> Unit
 ) {
@@ -925,29 +1198,55 @@ private fun MessageBubble(
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(140.dp)
+                                    .heightIn(min = 130.dp, max = 220.dp)
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(CyberBgDark)
-                                    .border(BorderStroke(1.dp, CyberBorderSubtle), RoundedCornerShape(8.dp)),
+                                    .border(BorderStroke(1.dp, CyberBorderSubtle), RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        if (message.mediaUrl.isNotBlank()) {
+                                            onOpenImage(message.mediaUrl, message.content.ifEmpty { message.mediaFileName })
+                                        }
+                                    },
                                 contentAlignment = Alignment.Center
                             ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(
-                                        imageVector = Icons.Default.Image,
-                                        contentDescription = null,
-                                        tint = CyberNeonCyan,
-                                        modifier = Modifier.size(32.dp)
+                                if (message.mediaUrl.isNotBlank()) {
+                                    SubcomposeAsyncImage(
+                                        model = message.mediaUrl,
+                                        contentDescription = "Image attachment",
+                                        contentScale = ContentScale.Crop,
+                                        loading = {
+                                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                CircularProgressIndicator(color = CyberNeonCyan, modifier = Modifier.size(24.dp))
+                                            }
+                                        },
+                                        error = {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Icon(Icons.Default.Image, contentDescription = null, tint = CyberNeonCyan, modifier = Modifier.size(32.dp))
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Text(text = message.mediaFileName.ifEmpty { "Photo" }, color = CyberTextSecondary, fontSize = 11.sp)
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxSize()
                                     )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = message.mediaFileName.ifEmpty { "Photo" },
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 11.sp,
-                                        color = CyberTextSecondary
-                                    )
+                                } else {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Icon(
+                                            imageVector = Icons.Default.Image,
+                                            contentDescription = null,
+                                            tint = CyberNeonCyan,
+                                            modifier = Modifier.size(32.dp)
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = message.mediaFileName.ifEmpty { "Photo" },
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 11.sp,
+                                            color = CyberTextSecondary
+                                        )
+                                    }
                                 }
                             }
-                            if (message.content.isNotBlank()) {
+                            if (message.content.isNotBlank() && message.content != "Photo") {
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
                                     text = message.content,
@@ -965,15 +1264,39 @@ private fun MessageBubble(
                                     .height(130.dp)
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(CyberBgDark)
-                                    .border(BorderStroke(1.dp, CyberBorderSubtle), RoundedCornerShape(8.dp)),
+                                    .border(BorderStroke(1.dp, CyberElectricEmerald.copy(alpha = 0.5f)), RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        if (message.mediaUrl.isNotBlank()) {
+                                            onOpenVideo(message.mediaUrl, message.mediaFileName)
+                                        }
+                                    },
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Videocam,
-                                    contentDescription = null,
-                                    tint = CyberElectricEmerald,
-                                    modifier = Modifier.size(36.dp)
-                                )
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(46.dp)
+                                            .clip(CircleShape)
+                                            .background(CyberElectricEmerald)
+                                            .padding(8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.PlayArrow,
+                                            contentDescription = "Play video",
+                                            tint = CyberBgDark,
+                                            modifier = Modifier.size(28.dp)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = "Tap to Play Video",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = CyberElectricEmerald
+                                    )
+                                }
                             }
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
@@ -988,30 +1311,38 @@ private fun MessageBubble(
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
+                                .fillMaxWidth()
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(CyberBgDark)
-                                .padding(8.dp)
+                                .border(BorderStroke(1.dp, CyberAmber.copy(alpha = 0.4f)), RoundedCornerShape(8.dp))
+                                .clickable {
+                                    if (message.mediaUrl.isNotBlank()) {
+                                        onOpenFile(message.mediaUrl, message.mediaFileName)
+                                    }
+                                }
+                                .padding(10.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Description,
                                 contentDescription = null,
                                 tint = CyberAmber,
-                                modifier = Modifier.size(24.dp)
+                                modifier = Modifier.size(26.dp)
                             )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column {
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = message.mediaFileName.ifEmpty { "attachment.bin" },
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
                                     color = CyberTextPrimary,
                                     maxLines = 1
                                 )
                                 Text(
-                                    text = message.mediaFileSize,
+                                    text = "${message.mediaFileSize} • Tap to Open",
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 9.sp,
-                                    color = CyberTextMuted
+                                    color = CyberAmber
                                 )
                             }
                         }
@@ -1125,5 +1456,54 @@ private fun TypingIndicatorBubble(peerName: String) {
                 )
             }
         }
+    }
+}
+
+private fun queryFileMetadata(context: Context, uri: Uri, fallbackName: String): Triple<String, String, String> {
+    var fileName = fallbackName
+    var sizeBytes = 0L
+    var mimeType = context.contentResolver.getType(uri) ?: ""
+
+    try {
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+            if (cursor.moveToFirst()) {
+                if (nameIndex != -1) {
+                    val name = cursor.getString(nameIndex)
+                    if (!name.isNullOrBlank()) fileName = name
+                }
+                if (sizeIndex != -1) {
+                    sizeBytes = cursor.getLong(sizeIndex)
+                }
+            }
+        }
+    } catch (e: Exception) {
+        // Fallback
+    }
+
+    val formattedSize = when {
+        sizeBytes <= 0 -> ""
+        sizeBytes < 1024 -> "$sizeBytes B"
+        sizeBytes < 1024 * 1024 -> "${sizeBytes / 1024} KB"
+        else -> String.format(java.util.Locale.US, "%.1f MB", sizeBytes / (1024.0 * 1024.0))
+    }
+
+    return Triple(fileName, formattedSize, mimeType)
+}
+
+private fun openDocumentUrl(context: Context, url: String, fileName: String) {
+    if (url.isBlank()) {
+        Toast.makeText(context, "File URL not available", Toast.LENGTH_SHORT).show()
+        return
+    }
+    try {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            data = Uri.parse(url)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+        }
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        Toast.makeText(context, "No app available to open this file", Toast.LENGTH_SHORT).show()
     }
 }

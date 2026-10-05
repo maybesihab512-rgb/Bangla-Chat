@@ -64,6 +64,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.example.data.calling.ActiveCallSession
 import com.example.model.CallType
@@ -71,7 +72,6 @@ import com.example.model.ConnectionState
 import com.example.ui.components.AvatarWithStatus
 import com.example.ui.components.CallStatusOverlay
 import com.example.ui.components.CyberBadge
-import com.example.ui.components.CyberCard
 import com.example.ui.components.NetworkQualityBadge
 import com.example.ui.theme.CyberAmber
 import com.example.ui.theme.CyberBgDark
@@ -86,6 +86,7 @@ import com.example.ui.theme.CyberTextMuted
 import com.example.ui.theme.CyberTextPrimary
 import com.example.ui.theme.CyberTextSecondary
 import com.example.ui.viewmodel.CallViewModel
+import org.webrtc.SurfaceViewRenderer
 
 @Composable
 fun ActiveCallScreen(
@@ -94,6 +95,21 @@ fun ActiveCallScreen(
     modifier: Modifier = Modifier
 ) {
     val session by viewModel.activeSession.collectAsState()
+    val hasRemoteVideo by viewModel.hasRemoteVideo.collectAsState()
+
+    // Safely trigger navigation back when call terminates without re-entrant loop
+    LaunchedEffect(session) {
+        if (session == null) {
+            onCallTerminated()
+        }
+    }
+
+    if (session == null) {
+        return
+    }
+
+    val active = session!!
+    val context = LocalContext.current
 
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
@@ -106,14 +122,6 @@ fun ActiveCallScreen(
         label = "callingPulse"
     )
 
-    if (session == null) {
-        // If session was ended, trigger navigation back
-        onCallTerminated()
-        return
-    }
-
-    val active = session!!
-    val context = LocalContext.current
     val permissionsToRequest = remember(active.callType) {
         if (active.callType == CallType.VIDEO) {
             arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA)
@@ -139,7 +147,7 @@ fun ActiveCallScreen(
         }
     }
 
-    val isVideo = active.callType == CallType.VIDEO && !active.isVideoMuted
+    val isVideoCall = active.callType == CallType.VIDEO
 
     val durationText = String.format(
         "%02d:%02d",
@@ -162,51 +170,113 @@ fun ActiveCallScreen(
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
-        // Video Stream Simulation or Cyber Background Grid
-        if (isVideo) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                CyberBgSurfaceElevated,
-                                CyberBgDark
-                            )
-                        )
-                    )
-            ) {
-                // Simulated camera stream HUD
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
+        // VIDEO CALL: Real WebRTC SurfaceViewRenderers
+        if (isVideoCall) {
+            // 1. Full-screen Remote Video Surface
+            Box(modifier = Modifier.fillMaxSize()) {
+                AndroidView(
+                    factory = { ctx ->
+                        SurfaceViewRenderer(ctx).apply {
+                            viewModel.attachRemoteVideoRenderer(this)
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                    onRelease = { renderer ->
+                        viewModel.detachRemoteVideoRenderer(renderer)
+                    }
+                )
+
+                // Placeholder / Waiting HUD when remote video has not arrived yet
+                if (!hasRemoteVideo) {
                     Box(
                         modifier = Modifier
-                            .size(160.dp)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(CyberBgDark)
-                            .border(BorderStroke(2.dp, CyberNeonCyan), RoundedCornerShape(20.dp)),
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        CyberBgSurfaceElevated.copy(alpha = 0.95f),
+                                        CyberBgDark.copy(alpha = 0.95f)
+                                    )
+                                )
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
-                        AvatarWithStatus(
-                            initials = active.contactAvatarInitials,
-                            colorHex = active.avatarColorHex,
-                            size = 90.dp,
-                            isOnline = true
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(24.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(130.dp)
+                                    .scale(pulseScale),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                AvatarWithStatus(
+                                    initials = active.contactAvatarInitials,
+                                    colorHex = active.avatarColorHex,
+                                    size = 110.dp,
+                                    isOnline = true
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            Text(
+                                text = if (active.connectionState == ConnectionState.CONNECTED)
+                                    "Waiting for remote video stream..."
+                                else
+                                    "Connecting secure video call...",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = CyberNeonCyan
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 2. Picture-in-Picture (PiP) Local Video Surface
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 110.dp, end = 16.dp)
+                    .size(width = 110.dp, height = 150.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(CyberBgDark)
+                    .border(BorderStroke(1.5.dp, CyberNeonCyan), RoundedCornerShape(14.dp))
+            ) {
+                if (active.isVideoMuted) {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.VideocamOff,
+                            contentDescription = "Camera Muted",
+                            tint = CyberTextMuted,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Camera Off",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            color = CyberTextMuted
                         )
                     }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    Text(
-                        text = "VIDEO CALL • ${active.metrics.currentResolution}",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = CyberNeonCyan
+                } else {
+                    AndroidView(
+                        factory = { ctx ->
+                            SurfaceViewRenderer(ctx).apply {
+                                viewModel.attachLocalVideoRenderer(this)
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                        onRelease = { renderer ->
+                            viewModel.detachLocalVideoRenderer(renderer)
+                        }
                     )
                 }
             }
@@ -217,7 +287,7 @@ fun ActiveCallScreen(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
-                .padding(20.dp),
+                .padding(horizontal = 20.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(
@@ -235,17 +305,17 @@ fun ActiveCallScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Real-time WebRTC Connection Strength (Ping & Packet Loss) Overlay
+            // Real-time WebRTC Connection Strength Overlay
             CallStatusOverlay(
                 metrics = active.metrics,
                 connectionState = active.connectionState,
-                isVideoCall = isVideo,
+                isVideoCall = isVideoCall,
                 modifier = Modifier.fillMaxWidth()
             )
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
-            if (!isVideo) {
+            if (!isVideoCall) {
                 // Audio Avatar with futuristic pulse
                 Box(
                     modifier = Modifier
@@ -268,7 +338,7 @@ fun ActiveCallScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(16.dp))
             }
 
             Text(
@@ -278,7 +348,7 @@ fun ActiveCallScreen(
                 color = CyberTextPrimary
             )
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             Text(
                 text = connectionLabel,
@@ -289,7 +359,7 @@ fun ActiveCallScreen(
                 letterSpacing = 1.sp
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // Adaptive Bitrate / Weak Network Mode Pill
             Surface(
@@ -371,7 +441,7 @@ fun ActiveCallScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             // Action Buttons Row
             Row(
@@ -387,13 +457,15 @@ fun ActiveCallScreen(
                     onClick = { viewModel.toggleMic() }
                 )
 
-                // Video toggle
-                CallControlButton(
-                    icon = if (active.isVideoMuted) Icons.Default.VideocamOff else Icons.Default.Videocam,
-                    label = if (active.isVideoMuted) "Video Off" else "Video On",
-                    isActive = active.isVideoMuted,
-                    onClick = { viewModel.toggleVideo() }
-                )
+                // Video toggle (only on video calls or to enable video)
+                if (isVideoCall) {
+                    CallControlButton(
+                        icon = if (active.isVideoMuted) Icons.Default.VideocamOff else Icons.Default.Videocam,
+                        label = if (active.isVideoMuted) "Video Off" else "Video On",
+                        isActive = active.isVideoMuted,
+                        onClick = { viewModel.toggleVideo() }
+                    )
+                }
 
                 // Speaker toggle
                 CallControlButton(
@@ -403,8 +475,8 @@ fun ActiveCallScreen(
                     onClick = { viewModel.toggleSpeaker() }
                 )
 
-                // Flip Camera
-                if (active.callType == CallType.VIDEO) {
+                // Flip Camera (only on video calls)
+                if (isVideoCall) {
                     CallControlButton(
                         icon = Icons.Default.Cameraswitch,
                         label = "Flip",
@@ -421,7 +493,6 @@ fun ActiveCallScreen(
                         .background(CyberCrimson)
                         .clickable {
                             viewModel.endCall()
-                            onCallTerminated()
                         },
                     contentAlignment = Alignment.Center
                 ) {

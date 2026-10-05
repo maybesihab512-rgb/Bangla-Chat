@@ -104,25 +104,31 @@ fun ProfileScreen(
     var editDisplayName by remember(currentUser) { mutableStateOf(currentUser?.name ?: "") }
     var editPhoneNumber by remember(currentUser) { mutableStateOf(currentUser?.phone ?: "") }
     var editStatusMessage by remember(currentUser) { mutableStateOf(currentUser?.statusMessage ?: "Available") }
+    var editPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    var phoneValidationError by remember { mutableStateOf<String?>(null) }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null) {
-            val current = currentUser
-            if (current != null) {
-                authViewModel.updateProfile(
-                    displayName = current.name,
-                    phoneNumber = current.phone,
-                    photoUri = uri,
-                    statusMessage = current.statusMessage,
-                    onSuccess = {
-                        Toast.makeText(context, "Profile photo updated", Toast.LENGTH_SHORT).show()
-                    },
-                    onError = { err ->
-                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                    }
-                )
+            if (showEditProfileSheet) {
+                editPhotoUri = uri
+            } else {
+                val current = currentUser
+                if (current != null) {
+                    authViewModel.updateProfile(
+                        displayName = current.name,
+                        phoneNumber = current.phone,
+                        photoUri = uri,
+                        statusMessage = current.statusMessage,
+                        onSuccess = {
+                            Toast.makeText(context, "Profile photo updated", Toast.LENGTH_SHORT).show()
+                        },
+                        onError = { err ->
+                            Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                        }
+                    )
+                }
             }
         }
     }
@@ -473,21 +479,32 @@ fun ProfileScreen(
                 ) {
                     AvatarWithStatus(
                         initials = editDisplayName.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("").ifEmpty { "U" },
-                        photoUrl = user.photoUrl,
-                        size = 60.dp,
+                        photoUrl = editPhotoUri?.toString() ?: user.photoUrl,
+                        size = 64.dp,
                         isOnline = true
                     )
                     Spacer(modifier = Modifier.width(16.dp))
-                    CyberOutlinedButton(
-                        text = "Change Photo",
-                        onClick = {
-                            photoPickerLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    Column(modifier = Modifier.weight(1f)) {
+                        CyberOutlinedButton(
+                            text = if (editPhotoUri != null) "Change Selected" else "Change Photo",
+                            onClick = {
+                                photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            icon = Icons.Default.CameraAlt,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        if (editPhotoUri != null) {
+                            Text(
+                                text = "New photo selected (unsaved)",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                color = CyberElectricEmerald,
+                                modifier = Modifier.padding(top = 4.dp)
                             )
-                        },
-                        icon = Icons.Default.CameraAlt,
-                        modifier = Modifier.weight(1f)
-                    )
+                        }
+                    }
                 }
 
                 CyberTextField(
@@ -502,13 +519,29 @@ fun ProfileScreen(
 
                 CyberTextField(
                     value = editPhoneNumber,
-                    onValueChange = { editPhoneNumber = it },
+                    onValueChange = {
+                        editPhoneNumber = it
+                        val phoneRegex = "^[+]?[0-9\\s\\-\\(\\)]{7,25}\$".toRegex()
+                        phoneValidationError = if (it.isNotBlank() && !it.matches(phoneRegex)) {
+                            "Invalid phone format. Enter 7-25 digits (e.g. +1 555-123-4567)"
+                        } else null
+                    },
                     label = "Phone Number",
                     placeholder = "+1 (555) 123-4567",
                     leadingIcon = {
                         Icon(Icons.Default.Phone, contentDescription = null, tint = CyberNeonCyan, modifier = Modifier.size(18.dp))
                     }
                 )
+
+                if (phoneValidationError != null) {
+                    Text(
+                        text = phoneValidationError ?: "",
+                        color = CyberAmber,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                    )
+                }
 
                 CyberTextField(
                     value = editStatusMessage,
@@ -528,26 +561,48 @@ fun ProfileScreen(
                     )
                 }
 
-                CyberButton(
-                    text = if (isUpdatingProfile) "Saving..." else "Save Changes",
-                    onClick = {
-                        authViewModel.updateProfile(
-                            displayName = editDisplayName.trim(),
-                            phoneNumber = editPhoneNumber.trim(),
-                            photoUri = null,
-                            statusMessage = editStatusMessage.trim(),
-                            onSuccess = {
-                                Toast.makeText(context, "Profile updated successfully", Toast.LENGTH_SHORT).show()
-                                showEditProfileSheet = false
-                            },
-                            onError = { err ->
-                                Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    CyberOutlinedButton(
+                        text = "Cancel",
+                        onClick = {
+                            editPhotoUri = null
+                            phoneValidationError = null
+                            showEditProfileSheet = false
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    CyberButton(
+                        text = if (isUpdatingProfile) "Saving..." else "Save Changes",
+                        onClick = {
+                            if (phoneValidationError != null) {
+                                Toast.makeText(context, phoneValidationError, Toast.LENGTH_SHORT).show()
+                                return@CyberButton
                             }
-                        )
-                    },
-                    enabled = !isUpdatingProfile && editDisplayName.isNotBlank(),
-                    icon = Icons.Default.Check
-                )
+                            authViewModel.updateProfile(
+                                displayName = editDisplayName.trim(),
+                                phoneNumber = editPhoneNumber.trim(),
+                                photoUri = editPhotoUri,
+                                statusMessage = editStatusMessage.trim(),
+                                onSuccess = {
+                                    editPhotoUri = null
+                                    phoneValidationError = null
+                                    Toast.makeText(context, "Profile updated successfully", Toast.LENGTH_SHORT).show()
+                                    showEditProfileSheet = false
+                                },
+                                onError = { err ->
+                                    Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                                }
+                            )
+                        },
+                        enabled = !isUpdatingProfile && editDisplayName.isNotBlank() && phoneValidationError == null,
+                        icon = Icons.Default.Check,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(20.dp))
             }

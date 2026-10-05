@@ -5,6 +5,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.Ringtone
 import android.media.RingtoneManager
@@ -43,6 +45,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import org.webrtc.PeerConnection
+import org.webrtc.SurfaceViewRenderer
+import java.util.Collections
 
 data class ActiveCallSession(
     val callId: String,
@@ -71,6 +75,10 @@ class CallingService(
 
     companion object {
         private const val TAG = "CallingService"
+        private const val NOTIFICATION_ID_CALL = 2001
+        private const val CALL_NOTIFICATION_CHANNEL_ID = "cipherlink_calls_v2"
+        private const val CALL_RING_TIMEOUT_MS = 30000L
+        private const val STALE_CALL_THRESHOLD_MS = 35000L
     }
 
     private val databaseId = try {
@@ -99,6 +107,9 @@ class CallingService(
     private val _networkMetrics = MutableStateFlow(NetworkQualityMetrics())
     override val networkMetrics: StateFlow<NetworkQualityMetrics> = _networkMetrics.asStateFlow()
 
+    private val _hasRemoteVideo = MutableStateFlow(false)
+    val hasRemoteVideo: StateFlow<Boolean> = _hasRemoteVideo.asStateFlow()
+
     private var webRtcManager: WebRtcManager? = null
 
     private var callTimerJob: Job? = null
@@ -111,12 +122,15 @@ class CallingService(
     private var incomingCallsListener: ListenerRegistration? = null
     private var candidatesListener: ListenerRegistration? = null
 
+    // Track processed call IDs to completely eliminate duplicate ringing or ghost calls
+    private val handledCallIds = Collections.synchronizedSet(mutableSetOf<String>())
+
     init {
         // Observe auth changes to register incoming calls listener
         authRepository?.let { repo ->
             scope.launch {
                 repo.currentUser.collect { user ->
-                    if (user != null) {
+                    if (user != null && user.id.isNotBlank()) {
                         attachIncomingCallsListener(user.id)
                     } else {
                         detachIncomingCallsListener()
@@ -131,54 +145,102 @@ class CallingService(
         if (userId.isBlank()) return
 
         try {
-            val path = "calls"
-            incomingCallsListener = db.collection(path)
+            Log.i(TAG, "Attaching incoming calls listener for user: $userId")
+            incomingCallsListener = db.collection("calls")
                 .whereEqualTo("receiverId", userId)
                 .whereEqualTo("status", "CALLING")
-                .limit(1)
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
                         Log.w(TAG, "Incoming calls listener error: ${error.message}")
                         return@addSnapshotListener
                     }
-                    val doc = snapshot?.documents?.firstOrNull() ?: return@addSnapshotListener
-                    val callId = doc.id
+                    val documents = snapshot?.documents ?: return@addSnapshotListener
+                    for (doc in documents) {
+                        val callId = doc.id
+                        val status = doc.getString("status") ?: ""
+                        if (status != "CALLING") continue
 
-                    // Prevent duplicate / ghost incoming call trigger if already in an active session
-                    if (_currentSession.value != null) {
-                        Log.i(TAG, "Ignoring incoming call $callId because already in session")
-                        return@addSnapshotListener
-                    }
-
-                    val callerId = doc.getString("callerId") ?: "unknown"
-                    val callerName = doc.getString("callerName") ?: "Contact"
-                    val callerAvatar = doc.getString("callerAvatar") ?: "SC"
-                    val callTypeStr = doc.getString("callType") ?: "AUDIO"
-                    val callType = if (callTypeStr == "VIDEO") CallType.VIDEO else CallType.AUDIO
-
-                    val incomingSession = ActiveCallSession(
-                        callId = callId,
-                        contactId = callerId,
-                        contactName = callerName,
-                        contactAvatarInitials = callerAvatar,
-                        avatarColorHex = 0xFF00F0FF,
-                        callType = callType,
-                        isIncoming = true,
-                        connectionState = ConnectionState.CONNECTING
-                    )
-                    _currentSession.value = incomingSession
-                    startAlerts(incomingSession)
-                    attachCallDocumentListener(callId)
-
-                    // 30-second missed call timeout
-                    callTimeoutJob?.cancel()
-                    callTimeoutJob = scope.launch {
-                        delay(30000)
-                        if (_currentSession.value?.callId == callId &&
-                            _currentSession.value?.connectionState == ConnectionState.CONNECTING
-                        ) {
-                            declineIncomingCall(isTimeout = true)
+                        // Stale call detection (Issue 5):
+                        val createdAt = doc.getTimestamp("createdAt")
+                        val now = System.currentTimeMillis()
+                        val isStale = if (createdAt != null) {
+                            (now - createdAt.toDate().time) > STALE_CALL_THRESHOLD_MS
+                        } else {
+                            val idTimestamp = callId.removePrefix("call_").toLongOrNull()
+                            if (idTimestamp != null) (now - idTimestamp) > STALE_CALL_THRESHOLD_MS else false
                         }
+
+                        if (isStale) {
+                            Log.i(TAG, "Ignoring stale call $callId (created > 35s ago)")
+                            scope.launch {
+                                try {
+                                    db.collection("calls").document(callId)
+                                        .update(
+                                            mapOf(
+                                                "status" to "EXPIRED",
+                                                "endedAt" to FieldValue.serverTimestamp()
+                                            )
+                                        )
+                                } catch (_: Exception) {}
+                            }
+                            continue
+                        }
+
+                        if (handledCallIds.contains(callId)) {
+                            continue
+                        }
+
+                        // Prevent duplicate / ghost incoming call trigger if already in an active session
+                        if (_currentSession.value != null) {
+                            Log.i(TAG, "Busy: device already in active call ${_currentSession.value?.callId}, marking $callId BUSY")
+                            scope.launch {
+                                try {
+                                    db.collection("calls").document(callId)
+                                        .update(
+                                            mapOf(
+                                                "status" to "BUSY",
+                                                "endedAt" to FieldValue.serverTimestamp()
+                                            )
+                                        )
+                                } catch (_: Exception) {}
+                            }
+                            continue
+                        }
+
+                        handledCallIds.add(callId)
+
+                        val callerId = doc.getString("callerId") ?: "unknown"
+                        val callerName = doc.getString("callerName") ?: "Contact"
+                        val callerAvatar = doc.getString("callerAvatar") ?: "SC"
+                        val callTypeStr = doc.getString("callType") ?: "AUDIO"
+                        val callType = if (callTypeStr == "VIDEO") CallType.VIDEO else CallType.AUDIO
+
+                        val incomingSession = ActiveCallSession(
+                            callId = callId,
+                            contactId = callerId,
+                            contactName = callerName,
+                            contactAvatarInitials = callerAvatar,
+                            avatarColorHex = 0xFF00F0FF,
+                            callType = callType,
+                            isIncoming = true,
+                            connectionState = ConnectionState.CONNECTING
+                        )
+                        _currentSession.value = incomingSession
+                        startAlerts(incomingSession)
+                        attachCallDocumentListener(callId)
+
+                        // 30-second missed call timeout
+                        callTimeoutJob?.cancel()
+                        callTimeoutJob = scope.launch {
+                            delay(CALL_RING_TIMEOUT_MS)
+                            if (_currentSession.value?.callId == callId &&
+                                _currentSession.value?.connectionState == ConnectionState.CONNECTING
+                            ) {
+                                Log.i(TAG, "Call $callId timed out after 30s with no answer")
+                                declineIncomingCall(isTimeout = true)
+                            }
+                        }
+                        break // Process one active incoming call at a time
                     }
                 }
         } catch (e: Exception) {
@@ -201,6 +263,8 @@ class CallingService(
                     val session = _currentSession.value ?: return@addSnapshotListener
                     if (session.callId != callId) return@addSnapshotListener
 
+                    Log.d(TAG, "Call $callId document status updated: $status")
+
                     when (status) {
                         "ACCEPTED" -> {
                             val answerSdp = snapshot.getString("answerSdp")
@@ -222,9 +286,10 @@ class CallingService(
                                 startDurationAndTelemetry()
                             }
                         }
-                        "DECLINED", "MISSED", "ENDED" -> {
+                        "DECLINED", "REJECTED", "MISSED", "ENDED", "CANCELLED", "EXPIRED", "BUSY" -> {
+                            Log.i(TAG, "Remote peer hung up or call terminated ($status), ending call locally")
                             stopAlerts()
-                            endCall()
+                            endCall(wasMissed = (status in listOf("MISSED", "CANCELLED", "EXPIRED")))
                         }
                     }
                 }
@@ -241,7 +306,14 @@ class CallingService(
         type: CallType,
         isIncoming: Boolean = false
     ) {
+        if (contactId.isBlank()) {
+            Log.w(TAG, "Cannot start call: contactId is blank")
+            return
+        }
+
         val callId = "call_${System.currentTimeMillis()}"
+        handledCallIds.add(callId)
+
         val initialSession = ActiveCallSession(
             callId = callId,
             contactId = contactId,
@@ -298,11 +370,12 @@ class CallingService(
         // 30-second timeout for unanswered outgoing call
         callTimeoutJob?.cancel()
         callTimeoutJob = scope.launch {
-            delay(30000)
+            delay(CALL_RING_TIMEOUT_MS)
             if (_currentSession.value?.callId == callId &&
                 _currentSession.value?.connectionState != ConnectionState.CONNECTED
             ) {
-                endCall()
+                Log.i(TAG, "Outgoing call $callId timed out after 30s")
+                cancelOutgoingCall()
             }
         }
     }
@@ -385,11 +458,21 @@ class CallingService(
                 handleIceConnectionStateChange(iceState)
             }
         )
+
+        // Observe remote video availability
+        webRtcManager?.let { manager ->
+            scope.launch {
+                manager.hasRemoteVideo.collect { hasVideo ->
+                    _hasRemoteVideo.value = hasVideo
+                }
+            }
+        }
     }
 
     private fun listenToRemoteIceCandidates(callId: String, remotePeerId: String) {
         candidatesListener?.remove()
         try {
+            Log.i(TAG, "Listening to remote ICE candidates for call $callId from sender: $remotePeerId")
             candidatesListener = db.collection("calls").document(callId).collection("candidates")
                 .whereEqualTo("senderId", remotePeerId)
                 .addSnapshotListener { snapshot, error ->
@@ -462,6 +545,30 @@ class CallingService(
         return endCall(wasMissed = isTimeout || session.durationSeconds == 0)
     }
 
+    fun cancelOutgoingCall(): CallRecord? {
+        val session = _currentSession.value ?: return null
+        callTimeoutJob?.cancel()
+        stopAlerts()
+
+        val currentUserId = Firebase.auth.currentUser?.uid
+        if (currentUserId != null) {
+            scope.launch {
+                try {
+                    db.collection("calls").document(session.callId)
+                        .update(
+                            mapOf(
+                                "status" to "CANCELLED",
+                                "endedAt" to FieldValue.serverTimestamp()
+                            )
+                        )
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to update call status to CANCELLED in Firestore", e)
+                }
+            }
+        }
+        return endCall(wasMissed = true)
+    }
+
     private fun startAlerts(session: ActiveCallSession) {
         startRingtone()
         startVibrate()
@@ -503,10 +610,10 @@ class CallingService(
                 context?.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 800, 1000), 0))
+                vibrator?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 1000, 800, 1000, 800), 0))
             } else {
                 @Suppress("DEPRECATION")
-                vibrator?.vibrate(longArrayOf(0, 800, 1000), 0)
+                vibrator?.vibrate(longArrayOf(0, 1000, 800, 1000, 800), 0)
             }
         } catch (e: Exception) {
             Log.w(TAG, "Vibration error", e)
@@ -529,41 +636,85 @@ class CallingService(
     }
 
     private fun showIncomingCallNotification(session: ActiveCallSession) {
-        if (context == null) return
+        val ctx = context ?: return
         try {
-            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
-            val channelId = "cipherlink_calls_channel"
+            val notificationManager = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+            val channelId = CALL_NOTIFICATION_CHANNEL_ID
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+                val audioAttributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
                 val channel = NotificationChannel(
                     channelId,
-                    "CipherLink Calls",
+                    "Incoming Calls",
                     NotificationManager.IMPORTANCE_HIGH
                 ).apply {
-                    description = "Alerts for incoming voice and video calls"
+                    description = "CipherLink incoming voice and video call alerts"
                     enableVibration(true)
+                    vibrationPattern = longArrayOf(0, 1000, 800, 1000, 800)
+                    setSound(ringtoneUri, audioAttributes)
+                    lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
                 }
                 notificationManager.createNotificationChannel(channel)
             }
-            val intent = Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+
+            // Tapping notification opens app
+            val contentIntent = Intent(ctx, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("CALL_ACTION", "SHOW_INCOMING_CALL")
+                putExtra("CALL_ID", session.callId)
             }
-            val pendingIntent = PendingIntent.getActivity(
-                context,
-                0,
-                intent,
+            val contentPendingIntent = PendingIntent.getActivity(
+                ctx,
+                1001,
+                contentIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
+
+            // Decline action
+            val declineIntent = Intent(ctx, CallActionReceiver::class.java).apply {
+                action = CallActionReceiver.ACTION_DECLINE_CALL
+                putExtra(CallActionReceiver.EXTRA_CALL_ID, session.callId)
+            }
+            val declinePendingIntent = PendingIntent.getBroadcast(
+                ctx,
+                1002,
+                declineIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            // Accept action
+            val acceptIntent = Intent(ctx, CallActionReceiver::class.java).apply {
+                action = CallActionReceiver.ACTION_ACCEPT_CALL
+                putExtra(CallActionReceiver.EXTRA_CALL_ID, session.callId)
+            }
+            val acceptPendingIntent = PendingIntent.getBroadcast(
+                ctx,
+                1003,
+                acceptIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
             val callTypeLabel = if (session.callType == CallType.VIDEO) "Video" else "Voice"
-            val notification = NotificationCompat.Builder(context, channelId)
+            val notification = NotificationCompat.Builder(ctx, channelId)
                 .setSmallIcon(R.mipmap.ic_launcher)
                 .setContentTitle("Incoming $callTypeLabel Call")
                 .setContentText("${session.contactName} is calling...")
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setCategory(NotificationCompat.CATEGORY_CALL)
-                .setContentIntent(pendingIntent)
-                .setAutoCancel(true)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setFullScreenIntent(contentPendingIntent, true)
+                .setContentIntent(contentPendingIntent)
+                .setOngoing(true)
+                .setAutoCancel(false)
+                .addAction(R.drawable.ic_launcher_foreground, "Decline", declinePendingIntent)
+                .addAction(R.drawable.ic_launcher_foreground, "Accept", acceptPendingIntent)
                 .build()
-            notificationManager.notify(2001, notification)
+
+            notificationManager.notify(NOTIFICATION_ID_CALL, notification)
+            Log.i(TAG, "Incoming call notification shown for ${session.callId}")
         } catch (e: Exception) {
             Log.w(TAG, "Could not show call notification", e)
         }
@@ -572,7 +723,7 @@ class CallingService(
     private fun clearIncomingCallNotification() {
         try {
             val notificationManager = context?.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-            notificationManager?.cancel(2001)
+            notificationManager?.cancel(NOTIFICATION_ID_CALL)
         } catch (e: Exception) {
             Log.w(TAG, "Could not clear call notification", e)
         }
@@ -582,12 +733,12 @@ class CallingService(
         try {
             audioManager?.apply {
                 mode = AudioManager.MODE_IN_COMMUNICATION
-                isSpeakerphoneOn = isSpeakerDefault
                 isMicrophoneMute = false
             }
+            setSpeakerphoneOn(isSpeakerDefault)
             val aecSupported = AcousticEchoCanceler.isAvailable()
             val nsSupported = NoiseSuppressor.isAvailable()
-            Log.i(TAG, "Audio configured. AEC supported: $aecSupported, NS supported: $nsSupported, Speaker: $isSpeakerDefault")
+            Log.i(TAG, "Audio configured. AEC: $aecSupported, NS: $nsSupported, Speaker: $isSpeakerDefault")
         } catch (e: Exception) {
             Log.w(TAG, "Audio manager setup warning", e)
         }
@@ -599,6 +750,9 @@ class CallingService(
                 mode = AudioManager.MODE_NORMAL
                 isSpeakerphoneOn = false
                 isMicrophoneMute = false
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    clearCommunicationDevice()
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Audio manager reset warning", e)
@@ -679,16 +833,72 @@ class CallingService(
     fun toggleSpeaker() {
         _currentSession.value?.let { session ->
             val newSpeaker = !session.isSpeakerOn
-            audioManager?.isSpeakerphoneOn = newSpeaker
-            _currentSession.value = session.copy(isSpeakerOn = newSpeaker)
+            setSpeakerphoneOn(newSpeaker)
+        }
+    }
+
+    override fun setSpeakerphoneOn(on: Boolean) {
+        val am = audioManager
+        if (am != null) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    if (on) {
+                        val speakerDevice = am.availableCommunicationDevices.firstOrNull {
+                            it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                        }
+                        if (speakerDevice != null) {
+                            am.setCommunicationDevice(speakerDevice)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            am.isSpeakerphoneOn = true
+                        }
+                    } else {
+                        val earpieceDevice = am.availableCommunicationDevices.firstOrNull {
+                            it.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+                        }
+                        if (earpieceDevice != null) {
+                            am.setCommunicationDevice(earpieceDevice)
+                        } else {
+                            am.clearCommunicationDevice()
+                            @Suppress("DEPRECATION")
+                            am.isSpeakerphoneOn = false
+                        }
+                    }
+                } else {
+                    @Suppress("DEPRECATION")
+                    am.isSpeakerphoneOn = on
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error switching audio route", e)
+            }
+        }
+        _currentSession.value?.let {
+            _currentSession.value = it.copy(isSpeakerOn = on)
         }
     }
 
     override fun switchCamera() {
-        _currentSession.value?.let { session ->
-            webRtcManager?.switchCamera()
-            _currentSession.value = session.copy(isFrontCamera = !session.isFrontCamera)
+        webRtcManager?.switchCamera { isFront ->
+            _currentSession.value?.let { session ->
+                _currentSession.value = session.copy(isFrontCamera = isFront)
+            }
         }
+    }
+
+    fun attachLocalVideoRenderer(renderer: SurfaceViewRenderer) {
+        webRtcManager?.attachLocalRenderer(renderer)
+    }
+
+    fun detachLocalVideoRenderer(renderer: SurfaceViewRenderer) {
+        webRtcManager?.detachLocalRenderer(renderer)
+    }
+
+    fun attachRemoteVideoRenderer(renderer: SurfaceViewRenderer) {
+        webRtcManager?.attachRemoteRenderer(renderer)
+    }
+
+    fun detachRemoteVideoRenderer(renderer: SurfaceViewRenderer) {
+        webRtcManager?.detachRemoteRenderer(renderer)
     }
 
     override fun setAudioPriorityMode(enabled: Boolean) {
@@ -716,6 +926,7 @@ class CallingService(
 
         webRtcManager?.disposePeerConnection()
         webRtcManager = null
+        _hasRemoteVideo.value = false
 
         val session = _currentSession.value
         _currentSession.value = null
@@ -803,13 +1014,6 @@ class CallingService(
         webRtcManager?.setLocalVideoEnabled(enabled)
         _currentSession.value?.let {
             _currentSession.value = it.copy(isVideoMuted = !enabled)
-        }
-    }
-
-    override fun setSpeakerphoneOn(on: Boolean) {
-        audioManager?.isSpeakerphoneOn = on
-        _currentSession.value?.let {
-            _currentSession.value = it.copy(isSpeakerOn = on)
         }
     }
 

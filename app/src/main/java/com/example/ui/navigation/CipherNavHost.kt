@@ -43,6 +43,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,6 +61,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.CipherAppContainer
 import com.example.data.repository.AuthStatus
+import com.google.firebase.Firebase
+import com.google.firebase.auth.auth
 import com.example.ui.screens.ActiveCallScreen
 import com.example.ui.screens.CallsScreen
 import com.example.ui.screens.ChatDetailScreen
@@ -135,7 +138,14 @@ fun CipherNavHost(
     }
     val settingsViewModel = remember { SettingsViewModel(CipherAppContainer.settingsRepository) }
 
-    var currentDestination by remember { mutableStateOf<AppDestination>(AppDestination.Splash) }
+    val initialDestination = remember {
+        if (authViewModel.hasValidSession()) {
+            AppDestination.Dashboard
+        } else {
+            AppDestination.Splash
+        }
+    }
+    var currentDestination by remember { mutableStateOf<AppDestination>(initialDestination) }
     var backStack by remember { mutableStateOf<List<AppDestination>>(emptyList()) }
 
     fun navigateTo(dest: AppDestination) {
@@ -153,9 +163,35 @@ fun CipherNavHost(
         }
     }
 
+    fun exitCallScreen() {
+        if (currentDestination is AppDestination.ActiveCall) {
+            if (backStack.isNotEmpty()) {
+                val prev = backStack.last()
+                backStack = backStack.dropLast(1)
+                currentDestination = if (prev is AppDestination.ActiveCall) AppDestination.Dashboard else prev
+            } else {
+                currentDestination = AppDestination.Dashboard
+            }
+        }
+    }
+
     val authStatus by authViewModel.authStatus.collectAsState()
     val dashboardState by dashboardViewModel.uiState.collectAsState()
     val activeCallSession by callViewModel.activeSession.collectAsState()
+
+    // Handle authentication session transitions automatically
+    LaunchedEffect(authStatus) {
+        val hasSession = authViewModel.hasValidSession()
+        if (hasSession && (currentDestination is AppDestination.Login || currentDestination is AppDestination.Splash)) {
+            currentDestination = AppDestination.Dashboard
+            backStack = emptyList()
+        } else if (!hasSession && currentDestination !in listOf(AppDestination.Login, AppDestination.Splash)) {
+            if (currentDestination !is AppDestination.Otp) {
+                currentDestination = AppDestination.Login
+                backStack = emptyList()
+            }
+        }
+    }
 
     // Show bottom navigation bar on primary tabs
     val showBottomBar = currentDestination in listOf(
@@ -205,7 +241,7 @@ fun CipherNavHost(
                         }
                         SplashScreen(
                             onNavigateNext = {
-                                if (authStatus is AuthStatus.Success && authViewModel.currentUser.value != null) {
+                                if (authViewModel.hasValidSession() || (authStatus is AuthStatus.Success && authViewModel.currentUser.value != null)) {
                                     currentDestination = AppDestination.Dashboard
                                 } else {
                                     currentDestination = AppDestination.Login
@@ -327,11 +363,11 @@ fun CipherNavHost(
                     is AppDestination.ActiveCall -> {
                         BackHandler {
                             callViewModel.endCall()
-                            navigateBack()
+                            exitCallScreen()
                         }
                         ActiveCallScreen(
                             viewModel = callViewModel,
-                            onCallTerminated = { navigateBack() }
+                            onCallTerminated = { exitCallScreen() }
                         )
                     }
 

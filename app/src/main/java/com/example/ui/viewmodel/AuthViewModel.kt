@@ -82,6 +82,10 @@ class AuthViewModel(
         }
     }
 
+    fun hasValidSession(): Boolean {
+        return authRepository.hasValidSession()
+    }
+
     fun updatePresence(isOnline: Boolean) {
         authRepository.updatePresence(isOnline)
     }

@@ -3,6 +3,9 @@ package com.example.data.calling
 import android.content.Context
 import android.util.Log
 import com.example.model.CallingConfig
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
@@ -18,15 +21,17 @@ import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.RTCStatsCollectorCallback
-import org.webrtc.RTCStatsReport
+import org.webrtc.RendererCommon
 import org.webrtc.RtpReceiver
 import org.webrtc.RtpTransceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
+import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoCapturer
 import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
+import java.util.Collections
 import kotlin.coroutines.resume
 
 class WebRtcManager(
@@ -50,7 +55,7 @@ class WebRtcManager(
         }
     }
 
-    private val eglBase: EglBase by lazy { EglBase.create() }
+    val eglBase: EglBase by lazy { EglBase.create() }
 
     private val peerConnectionFactory: PeerConnectionFactory by lazy {
         initializeFactoryIfNeeded(context)
@@ -73,9 +78,24 @@ class WebRtcManager(
     private var remoteAudioTrack: AudioTrack? = null
     private var remoteVideoTrack: VideoTrack? = null
 
+    private var localRenderer: SurfaceViewRenderer? = null
+    private var remoteRenderer: SurfaceViewRenderer? = null
+
+    private val _hasRemoteVideo = MutableStateFlow(false)
+    val hasRemoteVideo: StateFlow<Boolean> = _hasRemoteVideo.asStateFlow()
+
+    private var isVideoCall: Boolean = false
+    var isFrontCamera: Boolean = true
+        private set
+
+    // Thread-safe buffer for ICE candidates arriving before setRemoteDescription completes
+    private val pendingIceCandidates = Collections.synchronizedList(mutableListOf<IceCandidate>())
+
     fun initializePeerConnection(config: CallingConfig, isVideo: Boolean): Result<Unit> {
         return try {
             disposePeerConnection()
+            isVideoCall = isVideo
+            _hasRemoteVideo.value = false
 
             val iceServers = mutableListOf<PeerConnection.IceServer>()
             config.stunServers.forEach { stunUrl ->
@@ -96,6 +116,9 @@ class WebRtcManager(
                 sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
                 continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
                 iceTransportsType = PeerConnection.IceTransportsType.ALL
+                tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
+                bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
+                rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
             }
 
             val pcObserver = object : PeerConnection.Observer {
@@ -117,7 +140,7 @@ class WebRtcManager(
                 }
 
                 override fun onIceCandidate(candidate: IceCandidate) {
-                    Log.d(TAG, "Local IceCandidate: ${candidate.sdpMid} -> ${candidate.sdp}")
+                    Log.d(TAG, "Local IceCandidate generated: mid=${candidate.sdpMid}, sdp=${candidate.sdp}")
                     onIceCandidateGenerated(candidate)
                 }
 
@@ -130,10 +153,16 @@ class WebRtcManager(
                     if (stream.audioTracks.isNotEmpty()) {
                         remoteAudioTrack = stream.audioTracks[0]
                         remoteAudioTrack?.setEnabled(true)
+                        remoteAudioTrack?.setVolume(1.0)
                     }
-                    if (stream.videoTracks.isNotEmpty()) {
-                        remoteVideoTrack = stream.videoTracks[0]
-                        remoteVideoTrack?.setEnabled(true)
+                    if (stream.videoTracks.isNotEmpty() && isVideoCall) {
+                        val videoTrack = stream.videoTracks[0]
+                        remoteVideoTrack = videoTrack
+                        videoTrack.setEnabled(true)
+                        remoteRenderer?.let {
+                            try { videoTrack.addSink(it) } catch (e: Exception) { Log.w(TAG, "Error adding sink", e) }
+                        }
+                        _hasRemoteVideo.value = true
                     }
                 }
 
@@ -155,13 +184,18 @@ class WebRtcManager(
 
                 override fun onTrack(transceiver: RtpTransceiver) {
                     val track = transceiver.receiver.track()
-                    Log.d(TAG, "onTrack received: ${track?.kind()}")
+                    Log.d(TAG, "onTrack received: kind=${track?.kind()}")
                     if (track is AudioTrack) {
                         remoteAudioTrack = track
                         track.setEnabled(true)
-                    } else if (track is VideoTrack) {
+                        track.setVolume(1.0)
+                    } else if (track is VideoTrack && isVideoCall) {
                         remoteVideoTrack = track
                         track.setEnabled(true)
+                        remoteRenderer?.let {
+                            try { track.addSink(it) } catch (e: Exception) { Log.w(TAG, "Error adding sink", e) }
+                        }
+                        _hasRemoteVideo.value = true
                     }
                 }
             }
@@ -208,6 +242,7 @@ class WebRtcManager(
             val deviceNames = enumerator.deviceNames
             val frontName = deviceNames.firstOrNull { enumerator.isFrontFacing(it) } ?: deviceNames.firstOrNull()
             if (frontName != null) {
+                isFrontCamera = enumerator.isFrontFacing(frontName)
                 val capturer = enumerator.createCapturer(frontName, null)
                 videoCapturer = capturer
 
@@ -218,18 +253,78 @@ class WebRtcManager(
                 localVideoSource = videoSource
 
                 capturer.initialize(sth, context, videoSource.capturerObserver)
-                // Optimize for mobile stability and low-end Android efficiency
-                capturer.startCapture(480, 360, 24)
+                // 640x480 at 30fps provides optimal balance between clarity and mobile bandwidth efficiency
+                capturer.startCapture(640, 480, 30)
 
                 val videoTrack = peerConnectionFactory.createVideoTrack("ARDAMSv0", videoSource)
                 videoTrack.setEnabled(true)
                 localVideoTrack = videoTrack
                 pc.addTrack(videoTrack, listOf("ARDAMS"))
-                Log.i(TAG, "Local video track attached from front camera: $frontName")
+
+                // Attach to local renderer if already registered
+                localRenderer?.let {
+                    try { videoTrack.addSink(it) } catch (e: Exception) { Log.w(TAG, "Error adding local sink", e) }
+                }
+
+                Log.i(TAG, "Local video track attached from camera: $frontName (isFront=$isFrontCamera)")
+            } else {
+                Log.w(TAG, "No suitable camera found on device")
             }
         } catch (e: Exception) {
             Log.w(TAG, "Could not start video capturer: ${e.message}")
         }
+    }
+
+    fun initSurfaceRenderer(renderer: SurfaceViewRenderer, mirror: Boolean = false) {
+        try {
+            renderer.init(eglBase.eglBaseContext, null)
+            renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
+            renderer.setMirror(mirror)
+            renderer.setEnableHardwareScaler(true)
+        } catch (e: Exception) {
+            Log.d(TAG, "SurfaceViewRenderer init status: ${e.message}")
+        }
+    }
+
+    fun attachLocalRenderer(renderer: SurfaceViewRenderer) {
+        localRenderer = renderer
+        initSurfaceRenderer(renderer, mirror = isFrontCamera)
+        localVideoTrack?.let { track ->
+            try { track.addSink(renderer) } catch (e: Exception) { Log.w(TAG, "Error adding local sink", e) }
+        }
+        Log.i(TAG, "Attached local video renderer")
+    }
+
+    fun detachLocalRenderer(renderer: SurfaceViewRenderer) {
+        localVideoTrack?.let { track ->
+            try { track.removeSink(renderer) } catch (_: Exception) {}
+        }
+        if (localRenderer == renderer) {
+            localRenderer = null
+        }
+        try { renderer.release() } catch (_: Exception) {}
+        Log.i(TAG, "Detached local video renderer")
+    }
+
+    fun attachRemoteRenderer(renderer: SurfaceViewRenderer) {
+        remoteRenderer = renderer
+        initSurfaceRenderer(renderer, mirror = false)
+        remoteVideoTrack?.let { track ->
+            try { track.addSink(renderer) } catch (e: Exception) { Log.w(TAG, "Error adding remote sink", e) }
+            _hasRemoteVideo.value = true
+        }
+        Log.i(TAG, "Attached remote video renderer")
+    }
+
+    fun detachRemoteRenderer(renderer: SurfaceViewRenderer) {
+        remoteVideoTrack?.let { track ->
+            try { track.removeSink(renderer) } catch (_: Exception) {}
+        }
+        if (remoteRenderer == renderer) {
+            remoteRenderer = null
+        }
+        try { renderer.release() } catch (_: Exception) {}
+        Log.i(TAG, "Detached remote video renderer")
     }
 
     suspend fun createOffer(): Result<SessionDescription> = suspendCancellableCoroutine { cont ->
@@ -240,7 +335,7 @@ class WebRtcManager(
 
         val constraints = MediaConstraints().apply {
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", if (isVideoCall) "true" else "false"))
         }
 
         pc.createOffer(object : SdpObserver {
@@ -278,10 +373,12 @@ class WebRtcManager(
         pc.setRemoteDescription(object : SdpObserver {
             override fun onCreateSuccess(p0: SessionDescription?) {}
             override fun onSetSuccess() {
-                Log.i(TAG, "Remote offer set successfully, creating answer...")
+                Log.i(TAG, "Remote offer set successfully, draining queued ICE candidates and creating answer...")
+                drainPendingIceCandidates()
+
                 val constraints = MediaConstraints().apply {
                     mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
-                    mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", if (isVideoCall) "true" else "false"))
                 }
                 pc.createAnswer(object : SdpObserver {
                     override fun onCreateSuccess(answerSdp: SessionDescription) {
@@ -324,7 +421,8 @@ class WebRtcManager(
         pc.setRemoteDescription(object : SdpObserver {
             override fun onCreateSuccess(p0: SessionDescription?) {}
             override fun onSetSuccess() {
-                Log.i(TAG, "Remote answer set successfully")
+                Log.i(TAG, "Remote answer set successfully, draining queued ICE candidates...")
+                drainPendingIceCandidates()
                 if (cont.isActive) cont.resume(Result.success(Unit))
             }
             override fun onCreateFailure(p0: String?) {}
@@ -338,17 +436,37 @@ class WebRtcManager(
     fun addRemoteIceCandidate(sdpMid: String, sdpMLineIndex: Int, sdp: String) {
         try {
             val candidate = IceCandidate(sdpMid, sdpMLineIndex, sdp)
-            peerConnection?.addIceCandidate(candidate)
-            Log.d(TAG, "Added remote ICE candidate: $sdpMid")
+            val pc = peerConnection
+            if (pc != null && pc.remoteDescription != null) {
+                pc.addIceCandidate(candidate)
+                Log.d(TAG, "Added remote ICE candidate directly: $sdpMid")
+            } else {
+                Log.d(TAG, "Queued remote ICE candidate (remoteDescription not set yet): $sdpMid")
+                pendingIceCandidates.add(candidate)
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Error adding remote ICE candidate", e)
         }
     }
 
-    /**
-     * Extracts live connection metrics (RTT/ping, packet loss, jitter)
-     * using WebRTC Stats API (RTCStatsCollectorCallback).
-     */
+    private fun drainPendingIceCandidates() {
+        val pc = peerConnection ?: return
+        if (pc.remoteDescription == null) return
+        synchronized(pendingIceCandidates) {
+            val iterator = pendingIceCandidates.iterator()
+            while (iterator.hasNext()) {
+                val cand = iterator.next()
+                try {
+                    pc.addIceCandidate(cand)
+                    Log.d(TAG, "Drained pending ICE candidate: ${cand.sdpMid}")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed adding buffered ICE candidate", e)
+                }
+                iterator.remove()
+            }
+        }
+    }
+
     fun getRealtimeStats(callback: (rttMs: Int, packetLossPercent: Float, jitterMs: Int) -> Unit) {
         val pc = peerConnection ?: return
         try {
@@ -359,16 +477,13 @@ class WebRtcManager(
                 var jitterMs = 0
 
                 for (stats in report.statsMap.values) {
-                    // Extract RTT / ping from Candidate Pair
                     if (stats.type == "candidate-pair") {
                         val currentRtt = (stats.members["currentRoundTripTime"] as? Number)?.toDouble()
                             ?: (stats.members["totalRoundTripTime"] as? Number)?.toDouble()
                         if (currentRtt != null && currentRtt > 0.0) {
                             roundTripTimeMs = (currentRtt * 1000.0).toInt()
                         }
-                    }
-                    // Extract packet loss and jitter from Inbound RTP
-                    else if (stats.type == "inbound-rtp") {
+                    } else if (stats.type == "inbound-rtp") {
                         val lost = (stats.members["packetsLost"] as? Number)?.toLong() ?: 0L
                         val rec = (stats.members["packetsReceived"] as? Number)?.toLong() ?: 0L
                         val jit = (stats.members["jitter"] as? Number)?.toDouble() ?: 0.0
@@ -402,12 +517,34 @@ class WebRtcManager(
         localVideoTrack?.setEnabled(enabled)
     }
 
-    fun switchCamera() {
-        (videoCapturer as? CameraVideoCapturer)?.switchCamera(null)
+    fun switchCamera(onComplete: ((isFront: Boolean) -> Unit)? = null) {
+        val capturer = videoCapturer as? CameraVideoCapturer ?: return
+        capturer.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
+            override fun onCameraSwitchDone(isFront: Boolean) {
+                isFrontCamera = isFront
+                localRenderer?.setMirror(isFront)
+                onComplete?.invoke(isFront)
+                Log.i(TAG, "Switched camera. isFrontCamera=$isFront")
+            }
+
+            override fun onCameraSwitchError(errorDescription: String?) {
+                Log.e(TAG, "Camera switch error: $errorDescription")
+            }
+        })
     }
 
     fun disposePeerConnection() {
         try {
+            localRenderer?.let {
+                try { localVideoTrack?.removeSink(it) } catch (_: Exception) {}
+            }
+            remoteRenderer?.let {
+                try { remoteVideoTrack?.removeSink(it) } catch (_: Exception) {}
+            }
+            localRenderer = null
+            remoteRenderer = null
+            _hasRemoteVideo.value = false
+
             try {
                 videoCapturer?.stopCapture()
                 videoCapturer?.dispose()
@@ -434,6 +571,7 @@ class WebRtcManager(
             peerConnection?.close()
             peerConnection?.dispose()
             peerConnection = null
+            pendingIceCandidates.clear()
             Log.d(TAG, "PeerConnection and media tracks cleanly disposed")
         } catch (e: Exception) {
             Log.w(TAG, "Error disposing PeerConnection", e)

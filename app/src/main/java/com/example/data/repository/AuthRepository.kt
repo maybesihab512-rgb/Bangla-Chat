@@ -151,23 +151,31 @@ class AuthRepository(
         )
     }
 
+    fun hasValidSession(): Boolean {
+        return auth.currentUser != null
+    }
+
     fun syncUserProfileToFirestore(user: User) {
         val currentUid = auth.currentUser?.uid ?: return
         if (currentUid != user.id) return // Zero-trust check: must be owner of own profile
         scope.launch {
             try {
                 val userDoc = db.collection("users").document(user.id)
-                val data = hashMapOf(
+                val data = hashMapOf<String, Any>(
                     "userId" to user.id,
                     "displayName" to user.name,
                     "username" to user.handle,
-                    "profilePhoto" to user.photoUrl.ifEmpty { user.avatarInitials },
-                    "phoneNumber" to user.phone,
                     "email" to user.email,
                     "onlineStatus" to if (user.isOnline) "online" else "offline",
-                    "createdAt" to FieldValue.serverTimestamp(),
-                    "lastSeen" to FieldValue.serverTimestamp()
+                    "lastSeen" to FieldValue.serverTimestamp(),
+                    "updatedAt" to FieldValue.serverTimestamp()
                 )
+                if (user.phone.isNotBlank()) {
+                    data["phoneNumber"] = user.phone
+                }
+                if (user.photoUrl.isNotBlank()) {
+                    data["profilePhoto"] = user.photoUrl
+                }
                 userDoc.set(data, SetOptions.merge()).await()
             } catch (e: Exception) {
                 handleFirestoreError(e, OperationType.WRITE, "users/${user.id}")
@@ -525,6 +533,7 @@ class AuthRepository(
     }
 
     fun logOut(activity: Activity? = null) {
+        updatePresence(false)
         scope.launch {
             try {
                 auth.signOut()

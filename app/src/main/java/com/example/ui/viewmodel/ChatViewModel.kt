@@ -97,6 +97,12 @@ class ChatViewModel(
     private val _audioRecordingSeconds = MutableStateFlow(0)
     val audioRecordingSeconds: StateFlow<Int> = _audioRecordingSeconds.asStateFlow()
 
+    private val _uploadProgress = MutableStateFlow<Int?>(null)
+    val uploadProgress: StateFlow<Int?> = _uploadProgress.asStateFlow()
+
+    private val _isUploadingMedia = MutableStateFlow(false)
+    val isUploadingMedia: StateFlow<Boolean> = _isUploadingMedia.asStateFlow()
+
     // Realtime message state cache per conversation
     private val cachedMessageFlows = mutableMapOf<String, StateFlow<List<Message>>>()
     private val cachedTypingFlows = mutableMapOf<String, StateFlow<Boolean>>()
@@ -205,6 +211,45 @@ class ChatViewModel(
         )
         _replyingTo.value = null
         chatRepository.setTyping(conversationId, false)
+    }
+
+    fun uploadMedia(
+        conversationId: String,
+        uri: Uri,
+        type: MessageType,
+        fileName: String,
+        fileSize: String,
+        mimeType: String,
+        caption: String = "",
+        durationSeconds: Int = 0,
+        onSuccess: (String) -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            _isUploadingMedia.value = true
+            _uploadProgress.value = 0
+            val result = chatRepository.uploadAndSendMedia(
+                conversationId = conversationId,
+                uri = uri,
+                type = type,
+                fileName = fileName,
+                fileSize = fileSize,
+                mimeType = mimeType,
+                caption = caption,
+                durationSeconds = durationSeconds,
+                onProgress = { pct ->
+                    _uploadProgress.value = pct
+                }
+            )
+            _isUploadingMedia.value = false
+            _uploadProgress.value = null
+            result.onSuccess { url ->
+                onSuccess(url)
+            }.onFailure { err ->
+                val errorMsg = err.localizedMessage ?: "Upload failed"
+                onError(errorMsg)
+            }
+        }
     }
 
     fun startVoiceRecording(): Boolean {

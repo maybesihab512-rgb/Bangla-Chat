@@ -48,6 +48,7 @@ class CallViewModel(
 
     val activeSession: StateFlow<ActiveCallSession?> = callingService.currentSession
     val networkMetrics: StateFlow<NetworkQualityMetrics> = callingService.networkMetrics
+    val hasRemoteVideo: StateFlow<Boolean> = callingService.hasRemoteVideo
 
     fun setFilter(filter: CallFilter) {
         _selectedFilter.value = filter
@@ -63,14 +64,46 @@ class CallViewModel(
         )
     }
 
+    fun startCallWithDetails(
+        contactId: String,
+        name: String,
+        avatarInitials: String,
+        avatarColorHex: Long = 0xFF00F0FF,
+        isVideo: Boolean
+    ) {
+        callingService.startCall(
+            contactId = contactId,
+            contactName = name,
+            contactAvatarInitials = avatarInitials,
+            avatarColorHex = avatarColorHex,
+            type = if (isVideo) CallType.VIDEO else CallType.AUDIO
+        )
+    }
+
     fun startCallById(contactId: String, isVideo: Boolean) {
         val contact = userRepository.getContactById(contactId) ?: User(
             id = contactId,
-            name = "Secure Contact",
+            name = "Contact",
             handle = "user_$contactId",
-            avatarInitials = "SC"
+            avatarInitials = "C"
         )
         startCall(contact, if (isVideo) CallType.VIDEO else CallType.AUDIO)
+    }
+
+    fun attachLocalVideoRenderer(renderer: org.webrtc.SurfaceViewRenderer) {
+        callingService.attachLocalVideoRenderer(renderer)
+    }
+
+    fun detachLocalVideoRenderer(renderer: org.webrtc.SurfaceViewRenderer) {
+        callingService.detachLocalVideoRenderer(renderer)
+    }
+
+    fun attachRemoteVideoRenderer(renderer: org.webrtc.SurfaceViewRenderer) {
+        callingService.attachRemoteVideoRenderer(renderer)
+    }
+
+    fun detachRemoteVideoRenderer(renderer: org.webrtc.SurfaceViewRenderer) {
+        callingService.detachRemoteVideoRenderer(renderer)
     }
 
     fun answerCall() {

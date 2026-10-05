@@ -19,6 +19,9 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
+import com.google.firebase.storage.FirebaseStorage
+import com.google.firebase.storage.StorageMetadata
+import android.net.Uri
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -32,6 +35,13 @@ import kotlinx.coroutines.tasks.await
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+data class PeerPresence(
+    val userId: String = "",
+    val isOnline: Boolean = false,
+    val lastSeenText: String = "Offline",
+    val photoUrl: String = ""
+)
 
 class ChatRepository(
     private val context: Context,
@@ -58,6 +68,9 @@ class ChatRepository(
     private var activeConversationId: String? = null
     private var conversationsListener: ListenerRegistration? = null
     private val activeMessageListeners = mutableMapOf<String, ListenerRegistration>()
+    private val activePresenceListeners = mutableMapOf<String, ListenerRegistration>()
+    private val _peerPresenceMap = MutableStateFlow<Map<String, PeerPresence>>(emptyMap())
+    val peerPresenceMap: StateFlow<Map<String, PeerPresence>> = _peerPresenceMap.asStateFlow()
 
     init {
         // Observe current user changes and attach real-time conversations listener only when authenticated
@@ -378,6 +391,206 @@ class ChatRepository(
             }
         } else {
             updateLocalMessageStatus(conversationId, messageId, DeliveryStatus.SENT)
+        }
+    }
+
+    suspend fun uploadAndSendMedia(
+        conversationId: String,
+        uri: Uri,
+        type: MessageType,
+        fileName: String,
+        fileSize: String,
+        mimeType: String,
+        caption: String = "",
+        durationSeconds: Int = 0,
+        onProgress: (Int) -> Unit = {}
+    ): Result<String> {
+        val currentUserId = authRepository.currentUser.value?.id ?: Firebase.auth.currentUser?.uid
+            ?: return Result.failure(IllegalStateException("Not authenticated"))
+        val currentConv = _conversations.value.find { it.id == conversationId }
+        val receiverId = currentConv?.participantIds?.firstOrNull { it != currentUserId } ?: ""
+
+        val now = System.currentTimeMillis()
+        val messageId = "msg_${now}_${(1000..9999).random()}"
+        val formattedTime = timeFormat.format(Date(now))
+
+        val displayContent = caption.ifBlank {
+            when (type) {
+                MessageType.IMAGE -> "Photo"
+                MessageType.VIDEO -> "Video"
+                MessageType.FILE -> fileName
+                else -> "Media"
+            }
+        }
+
+        // 1. Immediate optimistic message showing SENDING status and local URI preview
+        val optimisticMsg = Message(
+            id = messageId,
+            conversationId = conversationId,
+            senderId = currentUserId,
+            senderName = "Me",
+            content = displayContent,
+            timestamp = now,
+            formattedTime = formattedTime,
+            type = type,
+            deliveryStatus = DeliveryStatus.SENDING,
+            isOutgoing = true,
+            mediaFileName = fileName,
+            mediaFileSize = fileSize,
+            mediaDurationSeconds = durationSeconds,
+            mediaUrl = uri.toString()
+        )
+
+        val currentList = _messagesMap.value[conversationId] ?: emptyList()
+        _messagesMap.value = _messagesMap.value + (conversationId to (currentList + optimisticMsg))
+
+        return try {
+            // 2. Upload file to Firebase Storage preserving full quality
+            val safeName = fileName.replace("[^a-zA-Z0-9._-]".toRegex(), "_")
+            val storageRef = FirebaseStorage.getInstance().reference
+                .child("chat_media")
+                .child(conversationId)
+                .child("${messageId}_$safeName")
+
+            val metadata = StorageMetadata.Builder()
+                .setContentType(
+                    mimeType.ifBlank {
+                        when (type) {
+                            MessageType.IMAGE -> "image/jpeg"
+                            MessageType.VIDEO -> "video/mp4"
+                            MessageType.FILE -> "application/octet-stream"
+                            else -> "application/octet-stream"
+                        }
+                    }
+                )
+                .build()
+
+            val uploadTask = storageRef.putFile(uri, metadata)
+            uploadTask.addOnProgressListener { taskSnapshot ->
+                val total = taskSnapshot.totalByteCount
+                if (total > 0) {
+                    val progress = ((100.0 * taskSnapshot.bytesTransferred) / total).toInt()
+                    onProgress(progress)
+                }
+            }
+
+            val uploadSnapshot = uploadTask.await()
+            val downloadUrl = uploadSnapshot.storage.downloadUrl.await().toString()
+
+            // 3. Write message document to Firestore
+            val messageData = hashMapOf(
+                "messageId" to messageId,
+                "conversationId" to conversationId,
+                "senderId" to currentUserId,
+                "receiverId" to receiverId,
+                "messageText" to displayContent,
+                "messageType" to type.name.lowercase(),
+                "status" to "sent",
+                "replyToMessageId" to "",
+                "replyToSenderName" to "",
+                "replyToContent" to "",
+                "mediaFileName" to fileName,
+                "mediaFileSize" to fileSize,
+                "mediaDuration" to durationSeconds,
+                "mediaUrl" to downloadUrl,
+                "createdAt" to FieldValue.serverTimestamp()
+            )
+
+            db.collection("conversations")
+                .document(conversationId)
+                .collection("messages")
+                .document(messageId)
+                .set(messageData)
+                .await()
+
+            // 4. Update parent conversation metadata
+            val summaryText = when (type) {
+                MessageType.IMAGE -> "📷 Photo"
+                MessageType.VIDEO -> "🎥 Video"
+                MessageType.FILE -> "📄 $fileName"
+                else -> displayContent
+            }
+            val convUpdate = hashMapOf(
+                "lastMessage" to summaryText,
+                "lastSenderId" to currentUserId,
+                "lastMessageTime" to FieldValue.serverTimestamp(),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            db.collection("conversations")
+                .document(conversationId)
+                .set(convUpdate, SetOptions.merge())
+                .await()
+
+            // 5. Update local message to SENT with the real downloadUrl
+            val updatedList = (_messagesMap.value[conversationId] ?: emptyList()).map { msg ->
+                if (msg.id == messageId) {
+                    msg.copy(
+                        deliveryStatus = DeliveryStatus.SENT,
+                        mediaUrl = downloadUrl
+                    )
+                } else msg
+            }
+            _messagesMap.value = _messagesMap.value + (conversationId to updatedList)
+
+            onProgress(100)
+            Result.success(downloadUrl)
+        } catch (e: Exception) {
+            Log.e("ChatRepository", "Failed to upload and send media", e)
+            Result.failure(e)
+        }
+    }
+
+    fun observePeerPresence(peerId: String): StateFlow<PeerPresence> {
+        if (peerId.isBlank()) return MutableStateFlow(PeerPresence())
+        if (!activePresenceListeners.containsKey(peerId)) {
+            val reg = db.collection("users").document(peerId)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null || snapshot == null || !snapshot.exists()) return@addSnapshotListener
+                    val status = snapshot.getString("onlineStatus") ?: "offline"
+                    val lastSeen = snapshot.getTimestamp("lastSeen")
+                    val photo = snapshot.getString("profilePhoto") ?: ""
+                    val now = System.currentTimeMillis()
+                    val lastSeenMs = lastSeen?.toDate()?.time ?: 0L
+                    val diffMs = now - lastSeenMs
+                    val isOnline = (status == "online") && (lastSeenMs > 0 && diffMs < 75_000L)
+                    val lastSeenText = formatLastSeen(lastSeen, isOnline)
+
+                    val presence = PeerPresence(
+                        userId = peerId,
+                        isOnline = isOnline,
+                        lastSeenText = lastSeenText,
+                        photoUrl = photo
+                    )
+                    _peerPresenceMap.value = _peerPresenceMap.value + (peerId to presence)
+
+                    // Also update in-memory conversations list so presence reflects in the list
+                    _conversations.value = _conversations.value.map { conv ->
+                        if (conv.participantIds.contains(peerId)) {
+                            conv.copy(isOnline = isOnline)
+                        } else conv
+                    }
+                }
+            activePresenceListeners[peerId] = reg
+        }
+        val flow = MutableStateFlow(_peerPresenceMap.value[peerId] ?: PeerPresence(userId = peerId))
+        scope.launch {
+            _peerPresenceMap.collect { map ->
+                map[peerId]?.let { flow.value = it }
+            }
+        }
+        return flow.asStateFlow()
+    }
+
+    private fun formatLastSeen(timestamp: com.google.firebase.Timestamp?, isOnline: Boolean): String {
+        if (isOnline) return "Online"
+        if (timestamp == null) return "Offline"
+        val diffMs = System.currentTimeMillis() - timestamp.toDate().time
+        val minutes = diffMs / (1000 * 60)
+        return when {
+            minutes < 1 -> "Last seen just now"
+            minutes < 60 -> "Last seen ${minutes}m ago"
+            minutes < 1440 -> "Last seen ${minutes / 60}h ago"
+            else -> "Last seen recently"
         }
     }
 
