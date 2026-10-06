@@ -103,6 +103,8 @@ dependencies {
   // Uncomment to use Firestore:
   implementation(libs.firebase.firestore)
   implementation(libs.firebase.storage)
+  implementation(libs.firebase.messaging)
+  implementation(libs.androidx.biometric)
   implementation(libs.stream.webrtc)
 
   // Uncomment ALL FOUR of the following dependencies together to use Firebase Auth and Google

@@ -18,6 +18,7 @@ import org.webrtc.EglBase
 import org.webrtc.IceCandidate
 import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
+import org.webrtc.MediaStreamTrack
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.RTCStatsCollectorCallback
@@ -31,6 +32,8 @@ import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoCapturer
 import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
+import org.webrtc.audio.AudioDeviceModule
+import org.webrtc.audio.JavaAudioDeviceModule
 import java.util.Collections
 import kotlin.coroutines.resume
 
@@ -57,11 +60,50 @@ class WebRtcManager(
 
     val eglBase: EglBase by lazy { EglBase.create() }
 
+    private var audioDeviceModule: AudioDeviceModule? = null
+
     private val peerConnectionFactory: PeerConnectionFactory by lazy {
         initializeFactoryIfNeeded(context)
+
+        // Setup JavaAudioDeviceModule with hardware AEC and Noise Suppressor for clear two-way audio
+        val adm = JavaAudioDeviceModule.builder(context)
+            .setUseHardwareAcousticEchoCanceler(JavaAudioDeviceModule.isBuiltInAcousticEchoCancelerSupported())
+            .setUseHardwareNoiseSuppressor(JavaAudioDeviceModule.isBuiltInNoiseSuppressorSupported())
+            .setAudioRecordErrorCallback(object : JavaAudioDeviceModule.AudioRecordErrorCallback {
+                override fun onWebRtcAudioRecordInitError(err: String?) {
+                    Log.e(TAG, "AudioRecord init error: $err")
+                }
+                override fun onWebRtcAudioRecordStartError(
+                    errorCode: JavaAudioDeviceModule.AudioRecordStartErrorCode?,
+                    err: String?
+                ) {
+                    Log.e(TAG, "AudioRecord start error: $errorCode - $err")
+                }
+                override fun onWebRtcAudioRecordError(err: String?) {
+                    Log.e(TAG, "AudioRecord runtime error: $err")
+                }
+            })
+            .setAudioTrackErrorCallback(object : JavaAudioDeviceModule.AudioTrackErrorCallback {
+                override fun onWebRtcAudioTrackInitError(err: String?) {
+                    Log.e(TAG, "AudioTrack init error: $err")
+                }
+                override fun onWebRtcAudioTrackStartError(
+                    errorCode: JavaAudioDeviceModule.AudioTrackStartErrorCode?,
+                    err: String?
+                ) {
+                    Log.e(TAG, "AudioTrack start error: $errorCode - $err")
+                }
+                override fun onWebRtcAudioTrackError(err: String?) {
+                    Log.e(TAG, "AudioTrack runtime error: $err")
+                }
+            })
+            .createAudioDeviceModule()
+        audioDeviceModule = adm
+
         val encoderFactory = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true)
         val decoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
         PeerConnectionFactory.builder()
+            .setAudioDeviceModule(adm)
             .setVideoEncoderFactory(encoderFactory)
             .setVideoDecoderFactory(decoderFactory)
             .createPeerConnectionFactory()
@@ -98,18 +140,28 @@ class WebRtcManager(
             _hasRemoteVideo.value = false
 
             val iceServers = mutableListOf<PeerConnection.IceServer>()
+
+            // 1. STUN Servers for reflexive candidates
             config.stunServers.forEach { stunUrl ->
-                iceServers.add(PeerConnection.IceServer.builder(stunUrl).createIceServer())
+                val cleanUrl = stunUrl.trim()
+                if (cleanUrl.isNotBlank()) {
+                    iceServers.add(PeerConnection.IceServer.builder(cleanUrl).createIceServer())
+                }
             }
+
+            // 2. Verified TURN Servers for cross-network relaying through restrictive symmetric NATs
             config.turnServers.forEach { turnConfig ->
-                val builder = PeerConnection.IceServer.builder(turnConfig.uri)
-                if (!turnConfig.username.isNullOrBlank()) {
-                    builder.setUsername(turnConfig.username)
+                if (turnConfig.isValid()) {
+                    val uri = turnConfig.uri.trim()
+                    val builder = PeerConnection.IceServer.builder(uri)
+                    turnConfig.username?.trim()?.let { if (it.isNotEmpty()) builder.setUsername(it) }
+                    turnConfig.password?.trim()?.let { if (it.isNotEmpty()) builder.setPassword(it) }
+                    builder.setTlsCertPolicy(turnConfig.tlsCertPolicy)
+                    iceServers.add(builder.createIceServer())
+                    Log.i(TAG, "Configured authenticated TURN server: $uri")
+                } else {
+                    Log.d(TAG, "Ignoring invalid/unauthenticated TURN configuration: ${turnConfig.uri}")
                 }
-                if (!turnConfig.password.isNullOrBlank()) {
-                    builder.setPassword(turnConfig.password)
-                }
-                iceServers.add(builder.createIceServer())
             }
 
             val rtcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
@@ -119,6 +171,8 @@ class WebRtcManager(
                 tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
                 bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
                 rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
+                keyType = PeerConnection.KeyType.ECDSA
+                iceCandidatePoolSize = 2
             }
 
             val pcObserver = object : PeerConnection.Observer {
@@ -151,18 +205,10 @@ class WebRtcManager(
                 override fun onAddStream(stream: MediaStream) {
                     Log.d(TAG, "onAddStream with ${stream.audioTracks.size} audio, ${stream.videoTracks.size} video")
                     if (stream.audioTracks.isNotEmpty()) {
-                        remoteAudioTrack = stream.audioTracks[0]
-                        remoteAudioTrack?.setEnabled(true)
-                        remoteAudioTrack?.setVolume(1.0)
+                        handleRemoteAudioTrack(stream.audioTracks[0])
                     }
                     if (stream.videoTracks.isNotEmpty() && isVideoCall) {
-                        val videoTrack = stream.videoTracks[0]
-                        remoteVideoTrack = videoTrack
-                        videoTrack.setEnabled(true)
-                        remoteRenderer?.let {
-                            try { videoTrack.addSink(it) } catch (e: Exception) { Log.w(TAG, "Error adding sink", e) }
-                        }
-                        _hasRemoteVideo.value = true
+                        handleRemoteVideoTrack(stream.videoTracks[0])
                     }
                 }
 
@@ -179,23 +225,22 @@ class WebRtcManager(
                 }
 
                 override fun onAddTrack(receiver: RtpReceiver?, mediaStreams: Array<out MediaStream>?) {
-                    Log.d(TAG, "onAddTrack")
+                    Log.d(TAG, "onAddTrack: kind=${receiver?.track()?.kind()}")
+                    val track = receiver?.track()
+                    if (track is AudioTrack) {
+                        handleRemoteAudioTrack(track)
+                    } else if (track is VideoTrack && isVideoCall) {
+                        handleRemoteVideoTrack(track)
+                    }
                 }
 
                 override fun onTrack(transceiver: RtpTransceiver) {
                     val track = transceiver.receiver.track()
                     Log.d(TAG, "onTrack received: kind=${track?.kind()}")
                     if (track is AudioTrack) {
-                        remoteAudioTrack = track
-                        track.setEnabled(true)
-                        track.setVolume(1.0)
+                        handleRemoteAudioTrack(track)
                     } else if (track is VideoTrack && isVideoCall) {
-                        remoteVideoTrack = track
-                        track.setEnabled(true)
-                        remoteRenderer?.let {
-                            try { track.addSink(it) } catch (e: Exception) { Log.w(TAG, "Error adding sink", e) }
-                        }
-                        _hasRemoteVideo.value = true
+                        handleRemoteVideoTrack(track)
                     }
                 }
             }
@@ -223,11 +268,47 @@ class WebRtcManager(
                 setupVideoCapturerAndTrack(pc)
             }
 
+            // Ensure Unified Plan transceivers are set to SEND_RECV direction
+            pc.transceivers.forEach { transceiver ->
+                if (transceiver.mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO) {
+                    transceiver.direction = RtpTransceiver.RtpTransceiverDirection.SEND_RECV
+                }
+                if (transceiver.mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO && isVideo) {
+                    transceiver.direction = RtpTransceiver.RtpTransceiverDirection.SEND_RECV
+                }
+            }
+
             Log.i(TAG, "WebRTC PeerConnection initialized successfully (isVideo=$isVideo)")
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing WebRTC", e)
             Result.failure(e)
+        }
+    }
+
+    private fun handleRemoteAudioTrack(track: AudioTrack) {
+        Log.i(TAG, "Binding and enabling remote AudioTrack: id=${track.id()}")
+        remoteAudioTrack = track
+        try {
+            track.setEnabled(true)
+            track.setVolume(1.0)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error setting up remote audio track", e)
+        }
+    }
+
+    private fun handleRemoteVideoTrack(track: VideoTrack) {
+        if (!isVideoCall) return
+        Log.i(TAG, "Binding and enabling remote VideoTrack: id=${track.id()}")
+        remoteVideoTrack = track
+        try {
+            track.setEnabled(true)
+            remoteRenderer?.let {
+                track.addSink(it)
+            }
+            _hasRemoteVideo.value = true
+        } catch (e: Exception) {
+            Log.w(TAG, "Error setting up remote video track", e)
         }
     }
 
@@ -433,15 +514,50 @@ class WebRtcManager(
         }, answerDesc)
     }
 
+    suspend fun restartIceAndCreateOffer(): Result<SessionDescription> = suspendCancellableCoroutine { cont ->
+        val pc = peerConnection ?: run {
+            cont.resume(Result.failure(IllegalStateException("PeerConnection not initialized")))
+            return@suspendCancellableCoroutine
+        }
+        pc.restartIce()
+        val constraints = MediaConstraints().apply {
+            mandatory.add(MediaConstraints.KeyValuePair("IceRestart", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", if (isVideoCall) "true" else "false"))
+        }
+        pc.createOffer(object : SdpObserver {
+            override fun onCreateSuccess(sdp: SessionDescription) {
+                pc.setLocalDescription(object : SdpObserver {
+                    override fun onCreateSuccess(p0: SessionDescription?) {}
+                    override fun onSetSuccess() {
+                        Log.i(TAG, "ICE restart local offer set successfully")
+                        if (cont.isActive) cont.resume(Result.success(sdp))
+                    }
+                    override fun onCreateFailure(p0: String?) {}
+                    override fun onSetFailure(err: String?) {
+                        Log.e(TAG, "ICE restart setLocalDescription error: $err")
+                        if (cont.isActive) cont.resume(Result.failure(Exception("Set local description failed: $err")))
+                    }
+                }, sdp)
+            }
+            override fun onSetSuccess() {}
+            override fun onCreateFailure(err: String?) {
+                Log.e(TAG, "ICE restart createOffer error: $err")
+                if (cont.isActive) cont.resume(Result.failure(Exception("ICE restart offer failed: $err")))
+            }
+            override fun onSetFailure(p0: String?) {}
+        }, constraints)
+    }
+
     fun addRemoteIceCandidate(sdpMid: String, sdpMLineIndex: Int, sdp: String) {
         try {
             val candidate = IceCandidate(sdpMid, sdpMLineIndex, sdp)
             val pc = peerConnection
             if (pc != null && pc.remoteDescription != null) {
                 pc.addIceCandidate(candidate)
-                Log.d(TAG, "Added remote ICE candidate directly: $sdpMid")
+                Log.d(TAG, "Added remote ICE candidate directly: mid=$sdpMid, mLine=$sdpMLineIndex")
             } else {
-                Log.d(TAG, "Queued remote ICE candidate (remoteDescription not set yet): $sdpMid")
+                Log.d(TAG, "Queued remote ICE candidate (remoteDescription not set yet): mid=$sdpMid")
                 pendingIceCandidates.add(candidate)
             }
         } catch (e: Exception) {
@@ -454,16 +570,56 @@ class WebRtcManager(
         if (pc.remoteDescription == null) return
         synchronized(pendingIceCandidates) {
             val iterator = pendingIceCandidates.iterator()
+            var drainedCount = 0
             while (iterator.hasNext()) {
                 val cand = iterator.next()
                 try {
                     pc.addIceCandidate(cand)
-                    Log.d(TAG, "Drained pending ICE candidate: ${cand.sdpMid}")
+                    drainedCount++
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed adding buffered ICE candidate", e)
+                    Log.w(TAG, "Failed adding buffered ICE candidate: ${cand.sdpMid}", e)
                 }
                 iterator.remove()
             }
+            if (drainedCount > 0) {
+                Log.i(TAG, "Successfully drained $drainedCount buffered ICE candidates")
+            }
+        }
+    }
+
+    fun setAudioPriorityMode(enabled: Boolean) {
+        if (!isVideoCall) return
+        try {
+            // When audio priority is active, suspend local video track transmission to preserve 100% bandwidth for audio
+            localVideoTrack?.setEnabled(!enabled)
+            Log.i(TAG, "AudioPriorityMode: videoTrack enabled = ${!enabled}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Error adjusting video track for audio priority", e)
+        }
+    }
+
+    fun adaptVideoQuality(maxBitrateKbps: Int) {
+        if (!isVideoCall) return
+        val pc = peerConnection ?: return
+        try {
+            pc.senders.forEach { sender ->
+                if (sender.track() is VideoTrack) {
+                    val params = sender.parameters
+                    if (params.encodings.isNotEmpty()) {
+                        val encoding = params.encodings[0]
+                        if (maxBitrateKbps > 0) {
+                            encoding.maxBitrateBps = maxBitrateKbps * 1000
+                            encoding.minBitrateBps = (maxBitrateKbps * 1000) / 4
+                        } else {
+                            encoding.maxBitrateBps = null
+                        }
+                        sender.parameters = params
+                        Log.d(TAG, "Adapted video sender maxBitrate to ${maxBitrateKbps}kbps")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error adapting video quality parameters", e)
         }
     }
 
@@ -572,6 +728,10 @@ class WebRtcManager(
             peerConnection?.dispose()
             peerConnection = null
             pendingIceCandidates.clear()
+
+            audioDeviceModule?.release()
+            audioDeviceModule = null
+
             Log.d(TAG, "PeerConnection and media tracks cleanly disposed")
         } catch (e: Exception) {
             Log.w(TAG, "Error disposing PeerConnection", e)
@@ -582,3 +742,4 @@ class WebRtcManager(
         disposePeerConnection()
     }
 }
+

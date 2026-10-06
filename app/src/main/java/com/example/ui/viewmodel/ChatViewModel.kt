@@ -334,6 +334,79 @@ class ChatViewModel(
         audioPlaybackManager.stop()
     }
 
+    val blockedUsers: StateFlow<Set<String>> = chatRepository.blockedUsers
+    val pinnedConversationIds: StateFlow<Set<String>> = chatRepository.pinnedConversationIds
+    val favoriteConversationIds: StateFlow<Set<String>> = chatRepository.favoriteConversationIds
+    val lockedConversations: StateFlow<Set<String>> = CipherAppContainer.chatSecurityManager.lockedConversations
+    val drafts: StateFlow<Map<String, String>> = CipherAppContainer.draftManager.draftsFlow
+
+    fun getDraft(conversationId: String): String =
+        CipherAppContainer.draftManager.getDraft(currentUserId, conversationId)
+
+    fun saveDraft(conversationId: String, draftText: String) {
+        CipherAppContainer.draftManager.saveDraft(currentUserId, conversationId, draftText)
+    }
+
+    fun clearDraft(conversationId: String) {
+        CipherAppContainer.draftManager.clearDraft(currentUserId, conversationId)
+    }
+
+    fun blockUser(targetUserId: String) {
+        chatRepository.blockUser(targetUserId)
+    }
+
+    fun unblockUser(targetUserId: String) {
+        chatRepository.unblockUser(targetUserId)
+    }
+
+    fun isUserBlocked(userId: String): Boolean =
+        chatRepository.isUserBlocked(userId)
+
+    fun togglePinConversation(conversationId: String) {
+        chatRepository.togglePinConversation(conversationId)
+    }
+
+    fun toggleFavoriteConversation(conversationId: String) {
+        chatRepository.toggleFavoriteConversation(conversationId)
+    }
+
+    fun toggleLockConversation(conversationId: String) {
+        if (CipherAppContainer.chatSecurityManager.isChatLocked(conversationId)) {
+            CipherAppContainer.chatSecurityManager.unlockConversation(conversationId)
+        } else {
+            CipherAppContainer.chatSecurityManager.lockConversation(conversationId)
+        }
+        chatRepository.reSortConversations()
+    }
+
+    fun isChatLocked(conversationId: String): Boolean =
+        CipherAppContainer.chatSecurityManager.isChatLocked(conversationId)
+
+    fun isChatUnlockedInSession(conversationId: String): Boolean =
+        CipherAppContainer.chatSecurityManager.isChatUnlockedInSession(conversationId)
+
+    fun markUnlockedForSession(conversationId: String) {
+        CipherAppContainer.chatSecurityManager.markUnlockedForSession(conversationId)
+    }
+
+    fun authenticateToOpenChat(
+        activity: androidx.fragment.app.FragmentActivity,
+        conversationTitle: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        CipherAppContainer.chatSecurityManager.authenticateToOpenChat(
+            activity = activity,
+            conversationTitle = conversationTitle,
+            onSuccess = onSuccess,
+            onError = onError
+        )
+    }
+
+    fun editMessage(conversationId: String, messageId: String, newContent: String) {
+        chatRepository.editMessage(conversationId, messageId, newContent)
+    }
+
     fun deleteMessage(conversationId: String, messageId: String, forEveryone: Boolean) {
         chatRepository.deleteMessage(conversationId, messageId, forEveryone)
     }

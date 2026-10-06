@@ -6,7 +6,6 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,12 +13,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import com.example.data.CipherAppContainer
+import com.example.data.notification.CipherNotificationManager
 import com.example.ui.navigation.CipherNavHost
 import com.example.ui.theme.CyberBgDark
 import com.example.ui.theme.MyApplicationTheme
+import com.google.firebase.messaging.FirebaseMessaging
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
@@ -29,9 +31,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         CipherAppContainer.initialize(this)
+        CipherNotificationManager.initialize(this)
         enableEdgeToEdge()
         requestNotificationPermissionIfNeeded()
         handleCallIntent(intent)
+        syncFcmToken()
 
         setContent {
             MyApplicationTheme {
@@ -85,6 +89,23 @@ class MainActivity : ComponentActivity() {
                     REQUEST_CODE_NOTIFICATIONS
                 )
             }
+        }
+    }
+
+    private fun syncFcmToken() {
+        try {
+            FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    val token = task.result
+                    if (!token.isNullOrBlank()) {
+                        CipherNotificationManager.syncFcmTokenToFirestore(token)
+                    }
+                } else {
+                    Log.w(TAG, "Fetching FCM registration token failed: ${task.exception?.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not initialize FCM token fetch", e)
         }
     }
 

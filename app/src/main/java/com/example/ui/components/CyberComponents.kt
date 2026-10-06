@@ -77,9 +77,12 @@ import com.example.ui.theme.CyberNeonCyan
 import com.example.ui.theme.CyberOnline
 import com.example.ui.theme.CyberTextDisabled
 import com.example.ui.theme.CyberTextMuted
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import com.example.ui.theme.CyberTextPrimary
 import com.example.ui.theme.CyberTextSecondary
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CyberCard(
     modifier: Modifier = Modifier,
@@ -88,15 +91,19 @@ fun CyberCard(
     backgroundColor: Color = CyberBgCard,
     cornerRadius: Dp = 16.dp,
     onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
     content: @Composable () -> Unit
 ) {
     val shape = RoundedCornerShape(cornerRadius)
-    val cardModifier = if (onClick != null) {
+    val cardModifier = if (onClick != null || onLongClick != null) {
         modifier
             .clip(shape)
             .border(BorderStroke(1.dp, borderColor), shape)
             .background(backgroundColor)
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = { onClick?.invoke() },
+                onLongClick = onLongClick
+            )
     } else {
         modifier
             .clip(shape)
@@ -399,39 +406,33 @@ fun NetworkQualityBadge(
 @Composable
 fun DeliveryTick(
     status: DeliveryStatus,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    showLabel: Boolean = false
 ) {
-    when (status) {
-        DeliveryStatus.SENDING -> {
-            Icon(
-                imageVector = Icons.Default.Schedule,
-                contentDescription = "Sending",
-                tint = CyberTextMuted,
-                modifier = modifier.size(13.dp)
-            )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+    ) {
+        val (icon, tint, label) = when (status) {
+            DeliveryStatus.SENDING -> Triple(Icons.Default.Schedule, CyberTextMuted, "Sending")
+            DeliveryStatus.SENT -> Triple(Icons.Default.Check, CyberTextSecondary, "Sent")
+            DeliveryStatus.DELIVERED -> Triple(Icons.Default.DoneAll, CyberTextSecondary, "Delivery")
+            DeliveryStatus.SEEN -> Triple(Icons.Default.DoneAll, CyberNeonCyan, "Seen")
         }
-        DeliveryStatus.SENT -> {
-            Icon(
-                imageVector = Icons.Default.Check,
-                contentDescription = "Sent",
-                tint = CyberTextSecondary,
-                modifier = modifier.size(13.dp)
-            )
-        }
-        DeliveryStatus.DELIVERED -> {
-            Icon(
-                imageVector = Icons.Default.DoneAll,
-                contentDescription = "Delivered",
-                tint = CyberTextSecondary,
-                modifier = modifier.size(14.dp)
-            )
-        }
-        DeliveryStatus.SEEN -> {
-            Icon(
-                imageVector = Icons.Default.DoneAll,
-                contentDescription = "Seen",
-                tint = CyberNeonCyan,
-                modifier = modifier.size(14.dp)
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = tint,
+            modifier = Modifier.size(13.dp)
+        )
+        if (showLabel && status != DeliveryStatus.SENDING) {
+            Spacer(modifier = Modifier.width(3.dp))
+            Text(
+                text = label,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Medium,
+                color = tint
             )
         }
     }

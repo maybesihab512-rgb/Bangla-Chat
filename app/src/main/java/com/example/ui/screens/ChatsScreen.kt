@@ -27,9 +27,14 @@ import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.ui.platform.LocalContext
+import androidx.fragment.app.FragmentActivity
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -67,12 +72,14 @@ import com.example.ui.components.CyberBadge
 import com.example.ui.components.CyberButton
 import com.example.ui.components.CyberCard
 import com.example.ui.components.DeliveryTick
+import com.example.ui.theme.CyberAmber
 import com.example.ui.theme.CyberBgCard
 import com.example.ui.theme.CyberBgDark
 import com.example.ui.theme.CyberBgSurface
 import com.example.ui.theme.CyberBgSurfaceElevated
 import com.example.ui.theme.CyberBorderGlow
 import com.example.ui.theme.CyberBorderSubtle
+import com.example.ui.theme.CyberCrimson
 import com.example.ui.theme.CyberElectricEmerald
 import com.example.ui.theme.CyberNeonCyan
 import com.example.ui.theme.CyberTextMuted
@@ -347,6 +354,9 @@ fun ChatsScreen(
                     }
                 }
             } else {
+                val context = LocalContext.current
+                val activity = context as? FragmentActivity
+
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxSize()
@@ -354,7 +364,23 @@ fun ChatsScreen(
                     items(conversations) { conv ->
                         ConversationCard(
                             conversation = conv,
-                            onClick = { onOpenConversation(conv.id) }
+                            onClick = {
+                                if (conv.isLocked && !viewModel.isChatUnlockedInSession(conv.id) && activity != null) {
+                                    viewModel.authenticateToOpenChat(
+                                        activity = activity,
+                                        conversationTitle = conv.title,
+                                        onSuccess = {
+                                            viewModel.markUnlockedForSession(conv.id)
+                                            onOpenConversation(conv.id)
+                                        },
+                                        onError = { err ->
+                                            android.widget.Toast.makeText(context, err, android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    )
+                                } else {
+                                    onOpenConversation(conv.id)
+                                }
+                            }
                         )
                     }
                     item {
@@ -614,6 +640,33 @@ private fun ConversationCard(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
+                        if (conversation.isPinned) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(
+                                imageVector = Icons.Default.PushPin,
+                                contentDescription = "Pinned",
+                                tint = CyberNeonCyan,
+                                modifier = Modifier.size(13.dp)
+                            )
+                        }
+                        if (conversation.isFavorite) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(
+                                imageVector = Icons.Default.Star,
+                                contentDescription = "Favorite",
+                                tint = CyberAmber,
+                                modifier = Modifier.size(13.dp)
+                            )
+                        }
+                        if (conversation.isLocked) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "Locked",
+                                tint = CyberElectricEmerald,
+                                modifier = Modifier.size(13.dp)
+                            )
+                        }
                         if (conversation.isGroup) {
                             Spacer(modifier = Modifier.width(6.dp))
                             Icon(
@@ -644,17 +697,37 @@ private fun ConversationCard(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.weight(1f)
                     ) {
-                        if (conversation.lastMessage?.isOutgoing == true) {
-                            DeliveryTick(status = conversation.lastMessage.deliveryStatus)
-                            Spacer(modifier = Modifier.width(4.dp))
+                        if (conversation.isLocked) {
+                            Text(
+                                text = "🔒 Locked conversation",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                color = CyberTextMuted,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        } else if (conversation.draft.isNotBlank()) {
+                            Text(
+                                text = "Draft: ${conversation.draft}",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = CyberCrimson,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        } else {
+                            if (conversation.lastMessage?.isOutgoing == true) {
+                                DeliveryTick(status = conversation.lastMessage.deliveryStatus)
+                                Spacer(modifier = Modifier.width(4.dp))
+                            }
+                            Text(
+                                text = conversation.lastMessage?.content ?: "No messages yet",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (conversation.unreadCount > 0) CyberTextPrimary else CyberTextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
-                        Text(
-                            text = conversation.lastMessage?.content ?: "No messages yet",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (conversation.unreadCount > 0) CyberTextPrimary else CyberTextSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
                     }
 
                     if (conversation.unreadCount > 0) {

@@ -19,5 +19,7 @@ data class FirestoreMessage(
     val mediaUrl: String = "",
     val createdAt: Timestamp? = null,
     val deliveredAt: Timestamp? = null,
-    val seenAt: Timestamp? = null
+    val seenAt: Timestamp? = null,
+    val isEdited: Boolean = false,
+    val editedAt: Timestamp? = null
 )

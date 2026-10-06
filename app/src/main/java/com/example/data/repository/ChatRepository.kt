@@ -72,26 +72,95 @@ class ChatRepository(
     private val _peerPresenceMap = MutableStateFlow<Map<String, PeerPresence>>(emptyMap())
     val peerPresenceMap: StateFlow<Map<String, PeerPresence>> = _peerPresenceMap.asStateFlow()
 
+    private val _blockedUsers = MutableStateFlow<Set<String>>(emptySet())
+    val blockedUsers: StateFlow<Set<String>> = _blockedUsers.asStateFlow()
+
+    private val _pinnedConversationIds = MutableStateFlow<Set<String>>(emptySet())
+    val pinnedConversationIds: StateFlow<Set<String>> = _pinnedConversationIds.asStateFlow()
+
+    private val _favoriteConversationIds = MutableStateFlow<Set<String>>(emptySet())
+    val favoriteConversationIds: StateFlow<Set<String>> = _favoriteConversationIds.asStateFlow()
+
+    private var blockedUsersListener: ListenerRegistration? = null
+    private var pinnedListener: ListenerRegistration? = null
+    private var favoritesListener: ListenerRegistration? = null
+
     init {
         // Observe current user changes and attach real-time conversations listener only when authenticated
         scope.launch {
             authRepository.currentUser.collect { user ->
                 val authUser = Firebase.auth.currentUser
                 if (user != null && authUser != null && user.id == authUser.uid) {
+                    attachBlockedUsersListener(user.id)
+                    attachPinnedListener(user.id)
+                    attachFavoritesListener(user.id)
                     attachConversationsListener(user.id)
                 } else {
                     detachAllListeners()
                     _conversations.value = emptyList()
                     _messagesMap.value = emptyMap()
+                    _blockedUsers.value = emptySet()
+                    _pinnedConversationIds.value = emptySet()
+                    _favoriteConversationIds.value = emptySet()
                 }
             }
         }
+    }
+
+    private fun attachBlockedUsersListener(userId: String) {
+        blockedUsersListener?.remove()
+        blockedUsersListener = db.collection("users").document(userId)
+            .collection("blocked")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                _blockedUsers.value = snapshot.documents.map { it.id }.toSet()
+            }
+    }
+
+    private fun attachPinnedListener(userId: String) {
+        pinnedListener?.remove()
+        pinnedListener = db.collection("users").document(userId)
+            .collection("pinned")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                _pinnedConversationIds.value = snapshot.documents.map { it.id }.toSet()
+                reSortConversations()
+            }
+    }
+
+    private fun attachFavoritesListener(userId: String) {
+        favoritesListener?.remove()
+        favoritesListener = db.collection("users").document(userId)
+            .collection("favorites")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                _favoriteConversationIds.value = snapshot.documents.map { it.id }.toSet()
+                reSortConversations()
+            }
+    }
+
+    fun reSortConversations() {
+        val current = _conversations.value
+        if (current.isEmpty()) return
+        val currentUid = currentUserId
+        _conversations.value = current.map { conv ->
+            conv.copy(
+                isPinned = _pinnedConversationIds.value.contains(conv.id),
+                isFavorite = _favoriteConversationIds.value.contains(conv.id),
+                isLocked = try { com.example.data.CipherAppContainer.chatSecurityManager.isChatLocked(conv.id) } catch (e: Exception) { false },
+                draft = try { com.example.data.CipherAppContainer.draftManager.getDraft(currentUid, conv.id) } catch (e: Exception) { "" }
+            )
+        }.sortedWith(
+            compareByDescending<Conversation> { it.isPinned }
+                .thenByDescending { it.lastMessage?.timestamp ?: 0L }
+        )
     }
 
     fun setActiveConversation(convId: String?) {
         activeConversationId = convId
         if (convId != null) {
             markConversationAsRead(convId)
+            com.example.data.notification.CipherNotificationManager.clearNotificationsForConversation(context, convId)
         }
     }
 
@@ -301,6 +370,17 @@ class ChatRepository(
         val currentUserId = authRepository.currentUser.value?.id ?: return
         val currentConv = _conversations.value.find { it.id == conversationId }
         val receiverId = currentConv?.participantIds?.firstOrNull { it != currentUserId } ?: ""
+
+        if (receiverId.isNotBlank() && isUserBlocked(receiverId)) {
+            Log.w("ChatRepository", "Cannot send message: contact is blocked")
+            return
+        }
+
+        try {
+            com.example.data.CipherAppContainer.draftManager.clearDraft(currentUserId, conversationId)
+        } catch (e: Exception) {
+            // Ignore
+        }
 
         val now = System.currentTimeMillis()
         val messageId = "msg_${now}_${(1000..9999).random()}"
@@ -622,6 +702,163 @@ class ChatRepository(
         }
     }
 
+    fun blockUser(targetUserId: String) {
+        val currentUserId = Firebase.auth.currentUser?.uid ?: return
+        if (targetUserId.isBlank() || targetUserId == currentUserId) return
+        _blockedUsers.value = _blockedUsers.value + targetUserId
+        scope.launch {
+            try {
+                db.collection("users")
+                    .document(currentUserId)
+                    .collection("blocked")
+                    .document(targetUserId)
+                    .set(
+                        mapOf(
+                            "blockedUserId" to targetUserId,
+                            "createdAt" to FieldValue.serverTimestamp()
+                        ),
+                        SetOptions.merge()
+                    ).await()
+            } catch (e: Exception) {
+                Log.e("ChatRepository", "Failed to block user $targetUserId", e)
+            }
+        }
+    }
+
+    fun unblockUser(targetUserId: String) {
+        val currentUserId = Firebase.auth.currentUser?.uid ?: return
+        if (targetUserId.isBlank()) return
+        _blockedUsers.value = _blockedUsers.value - targetUserId
+        scope.launch {
+            try {
+                db.collection("users")
+                    .document(currentUserId)
+                    .collection("blocked")
+                    .document(targetUserId)
+                    .delete()
+                    .await()
+            } catch (e: Exception) {
+                Log.e("ChatRepository", "Failed to unblock user $targetUserId", e)
+            }
+        }
+    }
+
+    fun isUserBlocked(userId: String): Boolean = _blockedUsers.value.contains(userId)
+
+    fun togglePinConversation(conversationId: String) {
+        val currentUserId = Firebase.auth.currentUser?.uid ?: return
+        val isPinned = _pinnedConversationIds.value.contains(conversationId)
+        val updated = if (isPinned) _pinnedConversationIds.value - conversationId else _pinnedConversationIds.value + conversationId
+        _pinnedConversationIds.value = updated
+        reSortConversations()
+
+        scope.launch {
+            try {
+                val docRef = db.collection("users")
+                    .document(currentUserId)
+                    .collection("pinned")
+                    .document(conversationId)
+
+                if (isPinned) {
+                    docRef.delete().await()
+                } else {
+                    docRef.set(
+                        mapOf(
+                            "conversationId" to conversationId,
+                            "pinnedAt" to FieldValue.serverTimestamp()
+                        ),
+                        SetOptions.merge()
+                    ).await()
+                }
+            } catch (e: Exception) {
+                Log.e("ChatRepository", "Failed to toggle pin for $conversationId", e)
+            }
+        }
+    }
+
+    fun toggleFavoriteConversation(conversationId: String) {
+        val currentUserId = Firebase.auth.currentUser?.uid ?: return
+        val isFav = _favoriteConversationIds.value.contains(conversationId)
+        val updated = if (isFav) _favoriteConversationIds.value - conversationId else _favoriteConversationIds.value + conversationId
+        _favoriteConversationIds.value = updated
+        reSortConversations()
+
+        scope.launch {
+            try {
+                val docRef = db.collection("users")
+                    .document(currentUserId)
+                    .collection("favorites")
+                    .document(conversationId)
+
+                if (isFav) {
+                    docRef.delete().await()
+                } else {
+                    docRef.set(
+                        mapOf(
+                            "conversationId" to conversationId,
+                            "favoritedAt" to FieldValue.serverTimestamp()
+                        ),
+                        SetOptions.merge()
+                    ).await()
+                }
+            } catch (e: Exception) {
+                Log.e("ChatRepository", "Failed to toggle favorite for $conversationId", e)
+            }
+        }
+    }
+
+    fun editMessage(conversationId: String, messageId: String, newContent: String) {
+        val currentUserId = Firebase.auth.currentUser?.uid ?: return
+        val clean = newContent.trim()
+        if (clean.isBlank()) return
+
+        val currentMessages = _messagesMap.value[conversationId] ?: emptyList()
+        val target = currentMessages.find { it.id == messageId }
+        if (target == null || target.senderId != currentUserId) {
+            Log.w("ChatRepository", "Cannot edit message: not sender or message not found")
+            return
+        }
+
+        val updatedMessages = currentMessages.map { msg ->
+            if (msg.id == messageId) {
+                msg.copy(
+                    content = clean,
+                    isEdited = true,
+                    editedAt = System.currentTimeMillis()
+                )
+            } else msg
+        }
+        _messagesMap.value = _messagesMap.value + (conversationId to updatedMessages)
+
+        scope.launch {
+            try {
+                db.collection("conversations")
+                    .document(conversationId)
+                    .collection("messages")
+                    .document(messageId)
+                    .update(
+                        mapOf(
+                            "messageText" to clean,
+                            "isEdited" to true,
+                            "editedAt" to FieldValue.serverTimestamp()
+                        )
+                    ).await()
+
+                val conv = _conversations.value.find { it.id == conversationId }
+                if (conv?.lastMessage?.id == messageId) {
+                    db.collection("conversations").document(conversationId).update(
+                        mapOf(
+                            "lastMessage" to clean,
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    ).await()
+                }
+            } catch (e: Exception) {
+                Log.e("ChatRepository", "Error editing message in Firestore", e)
+            }
+        }
+    }
+
     fun deleteMessage(conversationId: String, messageId: String, forEveryone: Boolean) {
         scope.launch {
             if (forEveryone && Firebase.auth.currentUser != null) {
@@ -729,6 +966,11 @@ class ChatRepository(
             convMessages.count { !it.isOutgoing && it.deliveryStatus != DeliveryStatus.SEEN }
         } else if (fc.lastSenderId.isNotBlank() && fc.lastSenderId != currentUserId) 1 else 0
 
+        val isPinned = _pinnedConversationIds.value.contains(fc.conversationId)
+        val isFavorite = _favoriteConversationIds.value.contains(fc.conversationId)
+        val isLocked = try { com.example.data.CipherAppContainer.chatSecurityManager.isChatLocked(fc.conversationId) } catch (e: Exception) { false }
+        val draftText = try { com.example.data.CipherAppContainer.draftManager.getDraft(currentUserId, fc.conversationId) } catch (e: Exception) { "" }
+
         return Conversation(
             id = fc.conversationId,
             title = peerName,
@@ -739,6 +981,10 @@ class ChatRepository(
             unreadCount = unread,
             avatarInitials = peerPhoto,
             avatarColorHex = if (peerId.hashCode() % 2 == 0) 0xFF00F0FF else 0xFF00E699,
+            isPinned = isPinned,
+            isFavorite = isFavorite,
+            isLocked = isLocked,
+            draft = draftText,
             isOnline = true
         )
     }
@@ -793,13 +1039,21 @@ class ChatRepository(
             mediaFileSize = fm.mediaFileSize,
             mediaDurationSeconds = fm.mediaDuration,
             mediaUrl = fm.mediaUrl,
-            isDeleted = fm.messageText == "This message was deleted"
+            isDeleted = fm.messageText == "This message was deleted",
+            isEdited = fm.isEdited,
+            editedAt = fm.editedAt?.toDate()?.time
         )
     }
 
     private fun detachAllListeners() {
         conversationsListener?.remove()
         conversationsListener = null
+        blockedUsersListener?.remove()
+        blockedUsersListener = null
+        pinnedListener?.remove()
+        pinnedListener = null
+        favoritesListener?.remove()
+        favoritesListener = null
         activeMessageListeners.values.forEach { it.remove() }
         activeMessageListeners.clear()
     }

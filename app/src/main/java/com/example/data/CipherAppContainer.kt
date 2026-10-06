@@ -25,6 +25,8 @@ object CipherAppContainer {
     val userRepository: UserRepository by lazy { UserRepository(getContext(), authRepository) }
     val settingsRepository: SettingsRepository by lazy { SettingsRepository() }
     val callingService: CallingService by lazy { CallingService(getContext(), authRepository) }
+    val draftManager: DraftManager by lazy { DraftManager(getContext()) }
+    val chatSecurityManager: ChatSecurityManager by lazy { ChatSecurityManager(getContext()) }
     val audioRecordManager: com.example.data.audio.AudioRecordManager by lazy { com.example.data.audio.AudioRecordManager(getContext()) }
     val audioPlaybackManager: com.example.data.audio.AudioPlaybackManager by lazy { com.example.data.audio.AudioPlaybackManager(getContext()) }
 }

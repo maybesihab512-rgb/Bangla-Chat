@@ -78,7 +78,7 @@ class CallingService(
         private const val NOTIFICATION_ID_CALL = 2001
         private const val CALL_NOTIFICATION_CHANNEL_ID = "cipherlink_calls_v2"
         private const val CALL_RING_TIMEOUT_MS = 30000L
-        private const val STALE_CALL_THRESHOLD_MS = 35000L
+        private const val STALE_CALL_THRESHOLD_MS = 25000L
     }
 
     private val databaseId = try {
@@ -116,6 +116,8 @@ class CallingService(
     private var telemetryJob: Job? = null
     private var callTimeoutJob: Job? = null
     private var reconnectSimulationJob: Job? = null
+    private var iceFailureTimeoutJob: Job? = null
+    private var audioFocusRequest: Any? = null
 
     private var ringtone: Ringtone? = null
     private var activeCallDocListener: ListenerRegistration? = null
@@ -124,6 +126,8 @@ class CallingService(
 
     // Track processed call IDs to completely eliminate duplicate ringing or ghost calls
     private val handledCallIds = Collections.synchronizedSet(mutableSetOf<String>())
+    // Track applied ICE candidate IDs to eliminate duplicate candidates
+    private val processedRemoteCandidateIds = Collections.synchronizedSet(mutableSetOf<String>())
 
     init {
         // Observe auth changes to register incoming calls listener
@@ -268,28 +272,45 @@ class CallingService(
                     when (status) {
                         "ACCEPTED" -> {
                             val answerSdp = snapshot.getString("answerSdp")
-                            if (!session.isIncoming && !answerSdp.isNullOrBlank() && session.connectionState != ConnectionState.CONNECTED) {
+                            if (!session.isIncoming && !answerSdp.isNullOrBlank()) {
                                 scope.launch {
                                     val setAnswerResult = webRtcManager?.setRemoteAnswer(answerSdp)
                                     if (setAnswerResult?.isSuccess == true) {
                                         Log.i(TAG, "Remote answer set on Caller successfully")
                                         stopAlerts()
-                                        _currentSession.value = session.copy(connectionState = ConnectionState.CONNECTED)
-                                        startDurationAndTelemetry()
                                     } else {
                                         Log.e(TAG, "Failed to set remote answer on caller: ${setAnswerResult?.exceptionOrNull()?.message}")
                                     }
                                 }
-                            } else if (session.connectionState != ConnectionState.CONNECTED) {
+                            } else {
                                 stopAlerts()
-                                _currentSession.value = session.copy(connectionState = ConnectionState.CONNECTED)
-                                startDurationAndTelemetry()
+                            }
+
+                            // Handle ICE reconnection offers and answers in real-time
+                            val reconnectOffer = snapshot.getString("reconnectOfferSdp")
+                            if (!reconnectOffer.isNullOrBlank() && session.isIncoming) {
+                                scope.launch {
+                                    val ansRes = webRtcManager?.setRemoteOfferAndCreateAnswer(reconnectOffer)
+                                    if (ansRes?.isSuccess == true) {
+                                        db.collection("calls").document(callId).update(
+                                            "reconnectAnswerSdp", ansRes.getOrThrow().description
+                                        )
+                                    }
+                                }
+                            }
+
+                            val reconnectAnswer = snapshot.getString("reconnectAnswerSdp")
+                            if (!reconnectAnswer.isNullOrBlank() && !session.isIncoming) {
+                                scope.launch {
+                                    webRtcManager?.setRemoteAnswer(reconnectAnswer)
+                                }
                             }
                         }
                         "DECLINED", "REJECTED", "MISSED", "ENDED", "CANCELLED", "EXPIRED", "BUSY" -> {
                             Log.i(TAG, "Remote peer hung up or call terminated ($status), ending call locally")
+                            handledCallIds.add(callId)
                             stopAlerts()
-                            endCall(wasMissed = (status in listOf("MISSED", "CANCELLED", "EXPIRED")))
+                            endCall(wasMissed = (status in listOf("MISSED", "CANCELLED", "EXPIRED", "BUSY")))
                         }
                     }
                 }
@@ -385,6 +406,7 @@ class CallingService(
         callTimeoutJob?.cancel()
         stopAlerts()
         configureAudioForCall(session.callType == CallType.VIDEO)
+        _currentSession.value = session.copy(connectionState = ConnectionState.SECURE_HANDSHAKE)
 
         val currentUserId = Firebase.auth.currentUser?.uid
         if (currentUserId != null) {
@@ -420,15 +442,10 @@ class CallingService(
                         ).await()
 
                     listenToRemoteIceCandidates(session.callId, session.contactId)
-                    _currentSession.value = session.copy(connectionState = ConnectionState.CONNECTED)
-                    startDurationAndTelemetry()
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to answer call in Firestore", e)
                 }
             }
-        } else {
-            _currentSession.value = session.copy(connectionState = ConnectionState.CONNECTED)
-            startDurationAndTelemetry()
         }
     }
 
@@ -441,7 +458,7 @@ class CallingService(
                 val currentUserId = Firebase.auth.currentUser?.uid ?: return@WebRtcManager
                 val candData = hashMapOf(
                     "candidate" to candidate.sdp,
-                    "sdpMid" to candidate.sdpMid,
+                    "sdpMid" to (candidate.sdpMid ?: "0"),
                     "sdpMLineIndex" to candidate.sdpMLineIndex,
                     "senderId" to currentUserId,
                     "createdAt" to FieldValue.serverTimestamp()
@@ -480,10 +497,13 @@ class CallingService(
                     snapshot.documentChanges.forEach { change ->
                         if (change.type == DocumentChange.Type.ADDED) {
                             val doc = change.document
-                            val sdp = doc.getString("candidate") ?: return@forEach
-                            val sdpMid = doc.getString("sdpMid") ?: "0"
-                            val sdpMLineIndex = doc.getLong("sdpMLineIndex")?.toInt() ?: 0
-                            webRtcManager?.addRemoteIceCandidate(sdpMid, sdpMLineIndex, sdp)
+                            val candId = doc.id
+                            if (processedRemoteCandidateIds.add(candId)) {
+                                val sdp = doc.getString("candidate") ?: return@forEach
+                                val sdpMid = doc.getString("sdpMid") ?: "0"
+                                val sdpMLineIndex = doc.getLong("sdpMLineIndex")?.toInt() ?: 0
+                                webRtcManager?.addRemoteIceCandidate(sdpMid, sdpMLineIndex, sdp)
+                            }
                         }
                     }
                 }
@@ -497,8 +517,10 @@ class CallingService(
         when (iceState) {
             PeerConnection.IceConnectionState.CONNECTED,
             PeerConnection.IceConnectionState.COMPLETED -> {
+                iceFailureTimeoutJob?.cancel()
                 _currentSession.value?.let { session ->
                     if (session.connectionState != ConnectionState.CONNECTED) {
+                        Log.i(TAG, "WebRTC media connection CONNECTED! Two-way audio active.")
                         _currentSession.value = session.copy(connectionState = ConnectionState.CONNECTED)
                         startDurationAndTelemetry()
                     }
@@ -507,17 +529,32 @@ class CallingService(
             PeerConnection.IceConnectionState.DISCONNECTED -> {
                 _currentSession.value?.let { session ->
                     _currentSession.value = session.copy(connectionState = ConnectionState.RECONNECTING)
+                    triggerNetworkReconnect()
                 }
+                scheduleIceFailureTimeout()
             }
             PeerConnection.IceConnectionState.FAILED -> {
                 _currentSession.value?.let { session ->
                     _currentSession.value = session.copy(connectionState = ConnectionState.RECONNECTING)
+                    triggerNetworkReconnect()
                 }
+                scheduleIceFailureTimeout()
             }
             PeerConnection.IceConnectionState.CLOSED -> {
                 endCall()
             }
             else -> {}
+        }
+    }
+
+    private fun scheduleIceFailureTimeout() {
+        iceFailureTimeoutJob?.cancel()
+        iceFailureTimeoutJob = scope.launch {
+            delay(15000L)
+            if (_currentSession.value?.connectionState == ConnectionState.RECONNECTING) {
+                Log.w(TAG, "ICE reconnection timed out after 15s. Terminating call.")
+                endCall()
+            }
         }
     }
 
@@ -729,8 +766,59 @@ class CallingService(
         }
     }
 
+    private fun requestVoipAudioFocus() {
+        val am = audioManager ?: return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val playbackAttributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+                val focusReq = android.media.AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE)
+                    .setAudioAttributes(playbackAttributes)
+                    .setAcceptsDelayedFocusGain(true)
+                    .setOnAudioFocusChangeListener { focusChange ->
+                        Log.d(TAG, "VoIP AudioFocus changed: $focusChange")
+                    }
+                    .build()
+                audioFocusRequest = focusReq
+                val res = am.requestAudioFocus(focusReq)
+                Log.i(TAG, "Requested VoIP AudioFocus (API 26+): result=$res")
+            } else {
+                @Suppress("DEPRECATION")
+                val res = am.requestAudioFocus(
+                    { focusChange -> Log.d(TAG, "VoIP AudioFocus legacy changed: $focusChange") },
+                    AudioManager.STREAM_VOICE_CALL,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+                )
+                Log.i(TAG, "Requested VoIP AudioFocus legacy: result=$res")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not request VoIP AudioFocus", e)
+        }
+    }
+
+    private fun abandonVoipAudioFocus() {
+        val am = audioManager ?: return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                (audioFocusRequest as? android.media.AudioFocusRequest)?.let { req ->
+                    am.abandonAudioFocusRequest(req)
+                    audioFocusRequest = null
+                    Log.i(TAG, "Abandoned VoIP AudioFocus (API 26+)")
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                am.abandonAudioFocus(null)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error abandoning VoIP AudioFocus", e)
+        }
+    }
+
     private fun configureAudioForCall(isSpeakerDefault: Boolean = false) {
         try {
+            requestVoipAudioFocus()
             audioManager?.apply {
                 mode = AudioManager.MODE_IN_COMMUNICATION
                 isMicrophoneMute = false
@@ -738,7 +826,7 @@ class CallingService(
             setSpeakerphoneOn(isSpeakerDefault)
             val aecSupported = AcousticEchoCanceler.isAvailable()
             val nsSupported = NoiseSuppressor.isAvailable()
-            Log.i(TAG, "Audio configured. AEC: $aecSupported, NS: $nsSupported, Speaker: $isSpeakerDefault")
+            Log.i(TAG, "Audio configured for call. AEC: $aecSupported, NS: $nsSupported, Speaker: $isSpeakerDefault")
         } catch (e: Exception) {
             Log.w(TAG, "Audio manager setup warning", e)
         }
@@ -754,6 +842,7 @@ class CallingService(
                     clearCommunicationDevice()
                 }
             }
+            abandonVoipAudioFocus()
         } catch (e: Exception) {
             Log.w(TAG, "Audio manager reset warning", e)
         }
