@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.CallReceived
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -132,15 +133,13 @@ fun CallsScreen(
 
                 Column {
                     Text(
-                        text = "CALLS",
-                        fontFamily = FontFamily.Monospace,
+                        text = "Calls",
+                        style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        letterSpacing = 1.sp,
                         color = CyberTextPrimary
                     )
                     Text(
-                        text = "Recent voice and video calls",
+                        text = "Voice and Video History",
                         style = MaterialTheme.typography.bodySmall,
                         color = CyberElectricEmerald,
                         fontSize = 11.sp
@@ -155,11 +154,14 @@ fun CallsScreen(
                 selectedTabIndex = if (selectedFilter == CallFilter.ALL) 0 else 1,
                 containerColor = CyberBgSurface,
                 contentColor = CyberNeonCyan,
+                divider = {
+                    HorizontalDivider(color = CyberBorderSubtle.copy(alpha = 0.5f))
+                },
                 indicator = { tabPositions ->
                     TabRowDefaults.SecondaryIndicator(
                         Modifier.tabIndicatorOffset(tabPositions[if (selectedFilter == CallFilter.ALL) 0 else 1]),
                         color = CyberNeonCyan,
-                        height = 2.dp
+                        height = 2.5.dp
                     )
                 }
             ) {
@@ -168,10 +170,9 @@ fun CallsScreen(
                     onClick = { viewModel.setFilter(CallFilter.ALL) },
                     text = {
                         Text(
-                            text = "ALL CALLS",
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
+                            text = "All Calls",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (selectedFilter == CallFilter.ALL) FontWeight.SemiBold else FontWeight.Normal,
                             color = if (selectedFilter == CallFilter.ALL) CyberNeonCyan else CyberTextSecondary
                         )
                     }
@@ -181,10 +182,9 @@ fun CallsScreen(
                     onClick = { viewModel.setFilter(CallFilter.MISSED) },
                     text = {
                         Text(
-                            text = "MISSED ONLY",
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
+                            text = "Missed",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (selectedFilter == CallFilter.MISSED) FontWeight.SemiBold else FontWeight.Normal,
                             color = if (selectedFilter == CallFilter.MISSED) CyberCrimson else CyberTextSecondary
                         )
                     }
@@ -201,18 +201,32 @@ fun CallsScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = Icons.Default.Phone,
-                            contentDescription = null,
-                            tint = CyberTextMuted,
-                            modifier = Modifier.size(48.dp)
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(CyberBgSurfaceElevated),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Phone,
+                                contentDescription = null,
+                                tint = CyberTextMuted,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(14.dp))
                         Text(
-                            text = "No recent calls",
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 13.sp,
-                            color = CyberTextMuted
+                            text = if (selectedFilter == CallFilter.MISSED) "No missed calls" else "No recent calls",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = CyberTextPrimary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Your call history will be displayed here",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = CyberTextSecondary
                         )
                     }
                 }
@@ -328,8 +342,7 @@ private fun CallRecordCard(
                 ) {
                     Text(
                         text = call.networkQualityRating,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 10.sp,
+                        style = MaterialTheme.typography.labelSmall,
                         color = CyberTextSecondary
                     )
 

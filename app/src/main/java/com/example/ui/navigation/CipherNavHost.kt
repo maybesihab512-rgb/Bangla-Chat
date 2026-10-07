@@ -41,6 +41,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -110,7 +111,9 @@ sealed class AppDestination {
 
 @Composable
 fun CipherNavHost(
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    intent: android.content.Intent? = null,
+    onIntentHandled: () -> Unit = {}
 ) {
     // ViewModels initialized with shared container repositories
     val authViewModel = remember { AuthViewModel(CipherAppContainer.authRepository) }
@@ -171,6 +174,43 @@ fun CipherNavHost(
                 currentDestination = if (prev is AppDestination.ActiveCall) AppDestination.Dashboard else prev
             } else {
                 currentDestination = AppDestination.Dashboard
+            }
+        }
+    }
+
+    // Handle notification click intent navigation
+    LaunchedEffect(intent) {
+        val currentIntent = intent ?: return@LaunchedEffect
+        val dest = currentIntent.getStringExtra("EXTRA_NAVIGATE_DESTINATION") ?: return@LaunchedEffect
+        when (dest) {
+            "CHAT_DETAIL" -> {
+                val convId = currentIntent.getStringExtra("EXTRA_CONVERSATION_ID")
+                if (!convId.isNullOrBlank()) {
+                    chatViewModel.selectConversation(convId)
+                    currentDestination = AppDestination.ChatDetail(convId)
+                    onIntentHandled()
+                }
+            }
+            "CALLS" -> {
+                currentDestination = AppDestination.Calls
+                onIntentHandled()
+            }
+            "START_CALL" -> {
+                val contactId = currentIntent.getStringExtra("EXTRA_CONTACT_ID")
+                val isVideo = currentIntent.getStringExtra("EXTRA_CALL_TYPE") == "VIDEO"
+                if (!contactId.isNullOrBlank()) {
+                    callViewModel.startCallById(contactId, isVideo)
+                    currentDestination = AppDestination.ActiveCall(contactId, isVideo)
+                    onIntentHandled()
+                }
+            }
+            "SETTINGS" -> {
+                currentDestination = AppDestination.Settings
+                onIntentHandled()
+            }
+            "DASHBOARD" -> {
+                currentDestination = AppDestination.Dashboard
+                onIntentHandled()
             }
         }
     }
@@ -408,7 +448,10 @@ fun CipherNavHost(
             }
 
             // Global Incoming Call Overlay
-            if (activeCallSession != null && activeCallSession!!.isIncoming && activeCallSession!!.connectionState == com.example.model.ConnectionState.CONNECTING) {
+            if (activeCallSession != null && activeCallSession!!.isIncoming && 
+                (activeCallSession!!.connectionState == com.example.model.ConnectionState.RINGING || 
+                 activeCallSession!!.connectionState == com.example.model.ConnectionState.CONNECTING) &&
+                currentDestination !is AppDestination.ActiveCall) {
                 IncomingCallOverlay(
                     session = activeCallSession!!,
                     onAccept = {
@@ -432,52 +475,58 @@ private fun CipherBottomBar(
     unreadChatCount: Int,
     missedCallCount: Int
 ) {
-    NavigationBar(
-        modifier = Modifier
-            .fillMaxWidth()
-            .navigationBarsPadding(),
-        containerColor = CyberBgSurface,
-        tonalElevation = 0.dp
+    Surface(
+        color = CyberBgSurface,
+        border = BorderStroke(0.5.dp, CyberBorderSubtle.copy(alpha = 0.8f)),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        BottomNavItem(
-            label = "Overview",
-            icon = Icons.Default.Dashboard,
-            isSelected = currentDestination == AppDestination.Dashboard,
-            badgeCount = 0,
-            onClick = { onSelect(AppDestination.Dashboard) }
-        )
+        NavigationBar(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding(),
+            containerColor = Color.Transparent,
+            tonalElevation = 0.dp
+        ) {
+            BottomNavItem(
+                label = "Overview",
+                icon = Icons.Default.Dashboard,
+                isSelected = currentDestination == AppDestination.Dashboard,
+                badgeCount = 0,
+                onClick = { onSelect(AppDestination.Dashboard) }
+            )
 
-        BottomNavItem(
-            label = "Chats",
-            icon = Icons.Default.Chat,
-            isSelected = currentDestination == AppDestination.Chats,
-            badgeCount = unreadChatCount,
-            onClick = { onSelect(AppDestination.Chats) }
-        )
+            BottomNavItem(
+                label = "Chats",
+                icon = Icons.Default.Chat,
+                isSelected = currentDestination == AppDestination.Chats,
+                badgeCount = unreadChatCount,
+                onClick = { onSelect(AppDestination.Chats) }
+            )
 
-        BottomNavItem(
-            label = "Calls",
-            icon = Icons.Default.Call,
-            isSelected = currentDestination == AppDestination.Calls,
-            badgeCount = missedCallCount,
-            onClick = { onSelect(AppDestination.Calls) }
-        )
+            BottomNavItem(
+                label = "Calls",
+                icon = Icons.Default.Call,
+                isSelected = currentDestination == AppDestination.Calls,
+                badgeCount = missedCallCount,
+                onClick = { onSelect(AppDestination.Calls) }
+            )
 
-        BottomNavItem(
-            label = "Contacts",
-            icon = Icons.Default.Contacts,
-            isSelected = currentDestination == AppDestination.Contacts,
-            badgeCount = 0,
-            onClick = { onSelect(AppDestination.Contacts) }
-        )
+            BottomNavItem(
+                label = "Contacts",
+                icon = Icons.Default.Contacts,
+                isSelected = currentDestination == AppDestination.Contacts,
+                badgeCount = 0,
+                onClick = { onSelect(AppDestination.Contacts) }
+            )
 
-        BottomNavItem(
-            label = "Profile",
-            icon = Icons.Default.Person,
-            isSelected = currentDestination == AppDestination.Profile,
-            badgeCount = 0,
-            onClick = { onSelect(AppDestination.Profile) }
-        )
+            BottomNavItem(
+                label = "Profile",
+                icon = Icons.Default.Person,
+                isSelected = currentDestination == AppDestination.Profile,
+                badgeCount = 0,
+                onClick = { onSelect(AppDestination.Profile) }
+            )
+        }
     }
 }
 
@@ -498,14 +547,13 @@ private fun RowScope.BottomNavItem(
                     badge = {
                         Box(
                             modifier = Modifier
-                                .clip(CircleShape)
+                                .clip(RoundedCornerShape(100.dp))
                                 .background(CyberNeonCyan)
-                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                .padding(horizontal = 5.dp, vertical = 1.dp)
                         ) {
                             Text(
-                                text = badgeCount.toString(),
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 9.sp,
+                                text = if (badgeCount > 99) "99+" else badgeCount.toString(),
+                                fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = CyberBgDark
                             )
@@ -529,10 +577,9 @@ private fun RowScope.BottomNavItem(
         label = {
             Text(
                 text = label,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 10.sp,
-                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                letterSpacing = 0.5.sp
+                fontSize = 11.sp,
+                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                letterSpacing = 0.2.sp
             )
         },
         colors = NavigationBarItemDefaults.colors(
@@ -540,7 +587,7 @@ private fun RowScope.BottomNavItem(
             unselectedIconColor = CyberTextSecondary,
             selectedTextColor = CyberNeonCyan,
             unselectedTextColor = CyberTextMuted,
-            indicatorColor = CyberBgSurfaceElevated
+            indicatorColor = CyberNeonCyan.copy(alpha = 0.12f)
         )
     )
 }
@@ -554,7 +601,7 @@ private fun IncomingCallOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(CyberBgDark.copy(alpha = 0.96f))
+            .background(CyberBgDark.copy(alpha = 0.98f))
             .padding(24.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -563,12 +610,21 @@ private fun IncomingCallOverlay(
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.fillMaxWidth()
         ) {
-            com.example.ui.components.AvatarWithStatus(
-                initials = session.contactAvatarInitials,
-                colorHex = session.avatarColorHex,
-                size = 100.dp,
-                isOnline = true
-            )
+            Box(
+                modifier = Modifier
+                    .size(108.dp)
+                    .clip(CircleShape)
+                    .background(CyberBgSurfaceElevated)
+                    .border(BorderStroke(2.dp, CyberNeonCyan.copy(alpha = 0.4f)), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                com.example.ui.components.AvatarWithStatus(
+                    initials = session.contactAvatarInitials,
+                    colorHex = session.avatarColorHex,
+                    size = 96.dp,
+                    isOnline = true
+                )
+            }
 
             Spacer(modifier = Modifier.height(20.dp))
 
@@ -582,22 +638,20 @@ private fun IncomingCallOverlay(
             Spacer(modifier = Modifier.height(6.dp))
 
             Text(
-                text = if (session.callType == com.example.model.CallType.VIDEO) "Incoming Video Call..." else "Incoming Voice Call...",
-                fontFamily = FontFamily.Monospace,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = CyberNeonCyan,
-                letterSpacing = 1.sp
+                text = if (session.callType == com.example.model.CallType.VIDEO) "Incoming Video Call" else "Incoming Voice Call",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = CyberNeonCyan
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                com.example.ui.components.CyberBadge(text = "END-TO-END ENCRYPTED", color = CyberElectricEmerald)
-                com.example.ui.components.CyberBadge(text = "HD AUDIO", color = CyberNeonCyan)
+                com.example.ui.components.CyberBadge(text = "End-to-End Encrypted", color = CyberElectricEmerald)
+                com.example.ui.components.CyberBadge(text = "HD Quality", color = CyberNeonCyan)
             }
 
-            Spacer(modifier = Modifier.height(48.dp))
+            Spacer(modifier = Modifier.height(56.dp))
 
             // Accept & Decline buttons
             Row(
@@ -609,7 +663,7 @@ private fun IncomingCallOverlay(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
                         modifier = Modifier
-                            .size(68.dp)
+                            .size(64.dp)
                             .clip(CircleShape)
                             .background(CyberCrimson)
                             .clickable(onClick = onDecline),
@@ -619,15 +673,14 @@ private fun IncomingCallOverlay(
                             imageVector = Icons.Default.CallEnd,
                             contentDescription = "Decline Call",
                             tint = Color.White,
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.size(28.dp)
                         )
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = "Decline",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
                         color = CyberTextSecondary
                     )
                 }
@@ -636,7 +689,7 @@ private fun IncomingCallOverlay(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
                         modifier = Modifier
-                            .size(68.dp)
+                            .size(64.dp)
                             .clip(CircleShape)
                             .background(CyberElectricEmerald)
                             .clickable(onClick = onAccept),
@@ -646,15 +699,14 @@ private fun IncomingCallOverlay(
                             imageVector = if (session.callType == com.example.model.CallType.VIDEO) Icons.Default.Videocam else Icons.Default.Call,
                             contentDescription = "Accept Call",
                             tint = CyberBgDark,
-                            modifier = Modifier.size(32.dp)
+                            modifier = Modifier.size(28.dp)
                         )
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = "Accept",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
                         color = CyberElectricEmerald
                     )
                 }

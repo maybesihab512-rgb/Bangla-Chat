@@ -156,11 +156,24 @@ fun ActiveCallScreen(
     )
 
     val connectionLabel = when (active.connectionState) {
+        ConnectionState.CALLING -> "CALLING..."
+        ConnectionState.RINGING -> "RINGING..."
         ConnectionState.CONNECTING -> "CONNECTING..."
         ConnectionState.SECURE_HANDSHAKE -> "SECURING CALL..."
         ConnectionState.CONNECTED -> "CONNECTED ($durationText)"
         ConnectionState.RECONNECTING -> "RECONNECTING..."
+        ConnectionState.DECLINED -> "CALL DECLINED"
+        ConnectionState.MISSED -> "CALL MISSED"
+        ConnectionState.FAILED -> "CALL FAILED"
+        ConnectionState.ENDED -> "CALL ENDED"
         else -> "CALL ENDED"
+    }
+
+    val statusColor = when (active.connectionState) {
+        ConnectionState.CONNECTED -> CyberElectricEmerald
+        ConnectionState.DECLINED, ConnectionState.FAILED, ConnectionState.MISSED -> CyberCrimson
+        ConnectionState.RECONNECTING -> CyberAmber
+        else -> CyberNeonCyan
     }
 
     Box(
@@ -348,24 +361,22 @@ fun ActiveCallScreen(
                 color = CyberTextPrimary
             )
 
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             Text(
                 text = connectionLabel,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = if (active.connectionState == ConnectionState.CONNECTED) CyberElectricEmerald else CyberNeonCyan,
-                letterSpacing = 1.sp
+                color = statusColor
             )
 
             Spacer(modifier = Modifier.height(12.dp))
 
             // Adaptive Bitrate / Weak Network Mode Pill
             Surface(
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(20.dp),
                 color = CyberBgSurfaceElevated,
-                border = BorderStroke(1.dp, CyberBorderSubtle)
+                border = BorderStroke(1.dp, CyberBorderSubtle.copy(alpha = 0.8f))
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
@@ -375,23 +386,21 @@ fun ActiveCallScreen(
                         imageVector = Icons.Default.Speed,
                         contentDescription = null,
                         tint = CyberNeonCyan,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(15.dp)
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Call Quality: ${if (active.metrics.bars >= 3) "Good" else "Weak"}",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.labelSmall,
                         color = CyberTextSecondary
                     )
 
                     if (active.metrics.isAudioPriorityActive) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "[DATA SAVER ACTIVE]",
-                            fontFamily = FontFamily.Monospace,
+                            text = "DATA SAVER",
+                            style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 10.sp,
                             color = CyberAmber
                         )
                     }
@@ -410,14 +419,14 @@ fun ActiveCallScreen(
             // Audio Priority manual override toggle
             Row(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(20.dp))
                     .background(CyberBgSurface)
                     .border(
                         BorderStroke(
                             1.dp,
-                            if (active.manualAudioPriorityOverride) CyberAmber else CyberBorderSubtle
+                            if (active.manualAudioPriorityOverride) CyberAmber else CyberBorderSubtle.copy(alpha = 0.7f)
                         ),
-                        RoundedCornerShape(8.dp)
+                        RoundedCornerShape(20.dp)
                     )
                     .clickable {
                         viewModel.toggleAudioPriorityMode(!active.manualAudioPriorityOverride)
@@ -429,14 +438,13 @@ fun ActiveCallScreen(
                     imageVector = Icons.Default.GraphicEq,
                     contentDescription = null,
                     tint = if (active.manualAudioPriorityOverride) CyberAmber else CyberTextSecondary,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(15.dp)
                 )
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = if (active.manualAudioPriorityOverride) "Data Saver: ON" else "Data Saver: AUTO",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Medium,
                     color = if (active.manualAudioPriorityOverride) CyberAmber else CyberTextSecondary
                 )
             }
@@ -540,8 +548,7 @@ private fun CallControlButton(
         Spacer(modifier = Modifier.height(6.dp))
         Text(
             text = label,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 10.sp,
+            style = MaterialTheme.typography.labelSmall,
             color = CyberTextSecondary
         )
     }

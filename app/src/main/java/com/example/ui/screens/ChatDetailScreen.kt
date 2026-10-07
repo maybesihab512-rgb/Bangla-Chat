@@ -131,6 +131,8 @@ import com.example.ui.theme.CyberBgSurface
 import com.example.ui.theme.CyberBgSurfaceElevated
 import com.example.ui.theme.CyberBorderGlow
 import com.example.ui.theme.CyberBorderSubtle
+import com.example.ui.theme.CyberBubbleIncoming
+import com.example.ui.theme.CyberBubbleOutgoing
 import com.example.ui.theme.CyberCrimson
 import com.example.ui.theme.CyberCrimsonSubtle
 import com.example.ui.theme.CyberElectricEmerald
@@ -275,7 +277,7 @@ fun ChatDetailScreen(
         // Chat Header
         Surface(
             color = CyberBgSurface,
-            border = BorderStroke(1.dp, CyberBorderSubtle)
+            border = BorderStroke(0.5.dp, CyberBorderSubtle.copy(alpha = 0.8f))
         ) {
             Row(
                 modifier = Modifier
@@ -293,7 +295,7 @@ fun ChatDetailScreen(
 
                 AvatarWithStatus(
                     initials = conversation?.avatarInitials ?: "SC",
-                    colorHex = conversation?.avatarColorHex ?: 0xFF00F0FF,
+                    colorHex = conversation?.avatarColorHex ?: 0xFF38BDF8,
                     size = 40.dp,
                     isOnline = conversation?.isOnline == true
                 )
@@ -304,7 +306,7 @@ fun ChatDetailScreen(
                     Text(
                         text = conversation?.title ?: "Chat",
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.SemiBold,
                         color = CyberTextPrimary,
                         maxLines = 1
                     )
@@ -361,22 +363,37 @@ fun ChatDetailScreen(
             }
         }
 
-        // Encryption banner
+        // Encryption banner - subtle & elegant
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(CyberBgSurfaceElevated)
                 .padding(vertical = 4.dp),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = "MESSAGES ARE END-TO-END ENCRYPTED",
-                fontFamily = FontFamily.Monospace,
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Bold,
-                color = CyberNeonCyan.copy(alpha = 0.8f),
-                letterSpacing = 0.5.sp
-            )
+            Surface(
+                shape = RoundedCornerShape(100.dp),
+                color = CyberBgSurfaceElevated.copy(alpha = 0.7f),
+                border = BorderStroke(0.5.dp, CyberBorderSubtle)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = null,
+                        tint = CyberElectricEmerald,
+                        modifier = Modifier.size(11.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "End-to-end encrypted",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = CyberTextSecondary
+                    )
+                }
+            }
         }
 
         // Messages List
@@ -1087,9 +1104,19 @@ private fun MessageBubble(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 2.dp),
+            .padding(vertical = 3.dp),
         horizontalAlignment = if (isOutgoing) Alignment.End else Alignment.Start
     ) {
+        val bubbleShape = RoundedCornerShape(
+            topStart = 16.dp,
+            topEnd = 16.dp,
+            bottomStart = if (isOutgoing) 16.dp else 4.dp,
+            bottomEnd = if (isOutgoing) 4.dp else 16.dp
+        )
+        val bubbleColor = if (isOutgoing) CyberBubbleOutgoing else CyberBubbleIncoming
+        val bubbleBorder = if (isOutgoing) BorderStroke(0.5.dp, Color.White.copy(alpha = 0.2f)) else BorderStroke(0.5.dp, CyberBorderSubtle)
+        val textPrimaryColor = if (isOutgoing) Color.White else CyberTextPrimary
+
         Surface(
             modifier = Modifier
                 .widthIn(max = 290.dp)
@@ -1099,17 +1126,9 @@ private fun MessageBubble(
                         onDoubleTap = { onReply() }
                     )
                 },
-            shape = RoundedCornerShape(
-                topStart = 14.dp,
-                topEnd = 14.dp,
-                bottomStart = if (isOutgoing) 14.dp else 2.dp,
-                bottomEnd = if (isOutgoing) 2.dp else 14.dp
-            ),
-            color = if (isOutgoing) CyberBgCard else CyberBgSurfaceElevated,
-            border = BorderStroke(
-                1.dp,
-                if (isOutgoing) CyberNeonCyan.copy(alpha = 0.35f) else CyberBorderSubtle
-            )
+            shape = bubbleShape,
+            color = bubbleColor,
+            border = bubbleBorder
         ) {
             Column(modifier = Modifier.padding(10.dp)) {
                 // Reply quote header
@@ -1118,23 +1137,22 @@ private fun MessageBubble(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(bottom = 6.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(CyberBgDark.copy(alpha = 0.6f))
-                            .border(BorderStroke(0.5.dp, CyberNeonCyan), RoundedCornerShape(6.dp))
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isOutgoing) Color.Black.copy(alpha = 0.25f) else CyberBgDark.copy(alpha = 0.6f))
+                            .border(BorderStroke(0.5.dp, if (isOutgoing) Color.White.copy(alpha = 0.4f) else CyberNeonCyan), RoundedCornerShape(8.dp))
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
                         Column {
                             Text(
                                 text = message.replyToMessage.senderName,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = CyberNeonCyan
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isOutgoing) Color.White else CyberNeonCyan
                             )
                             Text(
                                 text = message.replyToMessage.content,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = CyberTextSecondary,
+                                color = if (isOutgoing) Color.White.copy(alpha = 0.85f) else CyberTextSecondary,
                                 maxLines = 1,
                                 fontSize = 11.sp
                             )
@@ -1148,8 +1166,9 @@ private fun MessageBubble(
                         Text(
                             text = message.content,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = if (message.isDeleted) CyberTextMuted else CyberTextPrimary,
-                            fontStyle = if (message.isDeleted) androidx.compose.ui.text.font.FontStyle.Italic else null
+                            color = if (message.isDeleted) (if (isOutgoing) Color.White.copy(alpha = 0.6f) else CyberTextMuted) else textPrimaryColor,
+                            fontStyle = if (message.isDeleted) androidx.compose.ui.text.font.FontStyle.Italic else null,
+                            lineHeight = 20.sp
                         )
                     }
                     MessageType.AUDIO -> {
@@ -1161,7 +1180,7 @@ private fun MessageBubble(
                                 modifier = Modifier
                                     .size(38.dp)
                                     .clip(CircleShape)
-                                    .background(if (isAudioPlaying) CyberCrimson else CyberNeonCyan)
+                                    .background(if (isOutgoing) Color.White else (if (isAudioPlaying) CyberCrimson else CyberNeonCyan))
                                     .clickable {
                                         val audioSource = message.mediaUrl.ifEmpty { message.mediaFileName }
                                         onPlayAudio(audioSource)
@@ -1171,7 +1190,7 @@ private fun MessageBubble(
                                 Icon(
                                     imageVector = if (isAudioPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                     contentDescription = if (isAudioPlaying) "Pause voice memo" else "Play voice memo",
-                                    tint = CyberBgDark,
+                                    tint = if (isOutgoing) CyberBubbleOutgoing else CyberBgDark,
                                     modifier = Modifier.size(22.dp)
                                 )
                             }
@@ -1184,23 +1203,22 @@ private fun MessageBubble(
                                             .fillMaxWidth()
                                             .height(4.dp)
                                             .clip(RoundedCornerShape(2.dp)),
-                                        color = CyberNeonCyan,
-                                        trackColor = CyberBorderSubtle
+                                        color = if (isOutgoing) Color.White else CyberNeonCyan,
+                                        trackColor = if (isOutgoing) Color.White.copy(alpha = 0.3f) else CyberBorderSubtle
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                 } else {
                                     Icon(
                                         imageVector = Icons.Default.GraphicEq,
                                         contentDescription = null,
-                                        tint = CyberNeonCyan,
+                                        tint = if (isOutgoing) Color.White.copy(alpha = 0.85f) else CyberNeonCyan,
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }
                                 Text(
                                     text = "${message.mediaDurationSeconds}s • ${message.mediaFileSize.ifEmpty { "Audio memo" }}",
-                                    fontFamily = FontFamily.Monospace,
                                     fontSize = 10.sp,
-                                    color = CyberTextSecondary
+                                    color = if (isOutgoing) Color.White.copy(alpha = 0.8f) else CyberTextSecondary
                                 )
                             }
                         }
@@ -1211,9 +1229,8 @@ private fun MessageBubble(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .heightIn(min = 130.dp, max = 220.dp)
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .clip(RoundedCornerShape(12.dp))
                                     .background(CyberBgDark)
-                                    .border(BorderStroke(1.dp, CyberBorderSubtle), RoundedCornerShape(8.dp))
                                     .clickable {
                                         if (message.mediaUrl.isNotBlank()) {
                                             onOpenImage(message.mediaUrl, message.content.ifEmpty { message.mediaFileName })
@@ -1251,7 +1268,6 @@ private fun MessageBubble(
                                         Spacer(modifier = Modifier.height(4.dp))
                                         Text(
                                             text = message.mediaFileName.ifEmpty { "Photo" },
-                                            fontFamily = FontFamily.Monospace,
                                             fontSize = 11.sp,
                                             color = CyberTextSecondary
                                         )
@@ -1263,7 +1279,7 @@ private fun MessageBubble(
                                 Text(
                                     text = message.content,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = CyberTextPrimary
+                                    color = textPrimaryColor
                                 )
                             }
                         }
@@ -1274,9 +1290,8 @@ private fun MessageBubble(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(130.dp)
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .clip(RoundedCornerShape(12.dp))
                                     .background(CyberBgDark)
-                                    .border(BorderStroke(1.dp, CyberElectricEmerald.copy(alpha = 0.5f)), RoundedCornerShape(8.dp))
                                     .clickable {
                                         if (message.mediaUrl.isNotBlank()) {
                                             onOpenVideo(message.mediaUrl, message.mediaFileName)
@@ -1303,9 +1318,8 @@ private fun MessageBubble(
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
                                         text = "Tap to Play Video",
-                                        fontFamily = FontFamily.Monospace,
                                         fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
+                                        fontWeight = FontWeight.SemiBold,
                                         color = CyberElectricEmerald
                                     )
                                 }
@@ -1313,9 +1327,8 @@ private fun MessageBubble(
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = "${message.mediaFileName} (${message.mediaFileSize})",
-                                fontFamily = FontFamily.Monospace,
                                 fontSize = 10.sp,
-                                color = CyberTextSecondary
+                                color = if (isOutgoing) Color.White.copy(alpha = 0.8f) else CyberTextSecondary
                             )
                         }
                     }
@@ -1324,9 +1337,9 @@ private fun MessageBubble(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(CyberBgDark)
-                                .border(BorderStroke(1.dp, CyberAmber.copy(alpha = 0.4f)), RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isOutgoing) Color.Black.copy(alpha = 0.2f) else CyberBgDark)
+                                .border(BorderStroke(0.5.dp, if (isOutgoing) Color.White.copy(alpha = 0.3f) else CyberAmber.copy(alpha = 0.4f)), RoundedCornerShape(10.dp))
                                 .clickable {
                                     if (message.mediaUrl.isNotBlank()) {
                                         onOpenFile(message.mediaUrl, message.mediaFileName)
@@ -1337,24 +1350,22 @@ private fun MessageBubble(
                             Icon(
                                 imageVector = Icons.Default.Description,
                                 contentDescription = null,
-                                tint = CyberAmber,
+                                tint = if (isOutgoing) Color.White else CyberAmber,
                                 modifier = Modifier.size(26.dp)
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = message.mediaFileName.ifEmpty { "attachment.bin" },
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 11.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = CyberTextPrimary,
+                                    color = textPrimaryColor,
                                     maxLines = 1
                                 )
                                 Text(
                                     text = "${message.mediaFileSize} • Tap to Open",
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 9.sp,
-                                    color = CyberAmber
+                                    fontSize = 10.sp,
+                                    color = if (isOutgoing) Color.White.copy(alpha = 0.8f) else CyberAmber
                                 )
                             }
                         }
@@ -1370,9 +1381,8 @@ private fun MessageBubble(
                 ) {
                     Text(
                         text = message.formattedTime,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 9.sp,
-                        color = CyberTextMuted
+                        fontSize = 10.sp,
+                        color = if (isOutgoing) Color.White.copy(alpha = 0.75f) else CyberTextMuted
                     )
                     if (isOutgoing) {
                         Spacer(modifier = Modifier.width(4.dp))

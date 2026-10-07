@@ -369,11 +369,16 @@ class WebRtcManager(
 
     fun attachLocalRenderer(renderer: SurfaceViewRenderer) {
         localRenderer = renderer
+        try {
+            renderer.setZOrderMediaOverlay(true)
+        } catch (e: Exception) {
+            Log.d(TAG, "setZOrderMediaOverlay: ${e.message}")
+        }
         initSurfaceRenderer(renderer, mirror = isFrontCamera)
         localVideoTrack?.let { track ->
             try { track.addSink(renderer) } catch (e: Exception) { Log.w(TAG, "Error adding local sink", e) }
         }
-        Log.i(TAG, "Attached local video renderer")
+        Log.i(TAG, "Attached local video renderer (Z-order overlay=true)")
     }
 
     fun detachLocalRenderer(renderer: SurfaceViewRenderer) {
@@ -389,6 +394,11 @@ class WebRtcManager(
 
     fun attachRemoteRenderer(renderer: SurfaceViewRenderer) {
         remoteRenderer = renderer
+        try {
+            renderer.setZOrderMediaOverlay(false)
+        } catch (e: Exception) {
+            Log.d(TAG, "setZOrderMediaOverlay remote: ${e.message}")
+        }
         initSurfaceRenderer(renderer, mirror = false)
         remoteVideoTrack?.let { track ->
             try { track.addSink(renderer) } catch (e: Exception) { Log.w(TAG, "Error adding remote sink", e) }
@@ -454,8 +464,7 @@ class WebRtcManager(
         pc.setRemoteDescription(object : SdpObserver {
             override fun onCreateSuccess(p0: SessionDescription?) {}
             override fun onSetSuccess() {
-                Log.i(TAG, "Remote offer set successfully, draining queued ICE candidates and creating answer...")
-                drainPendingIceCandidates()
+                Log.i(TAG, "Remote offer set successfully. Creating answer...")
 
                 val constraints = MediaConstraints().apply {
                     mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
@@ -466,7 +475,8 @@ class WebRtcManager(
                         pc.setLocalDescription(object : SdpObserver {
                             override fun onCreateSuccess(p0: SessionDescription?) {}
                             override fun onSetSuccess() {
-                                Log.i(TAG, "Local answer set successfully")
+                                Log.i(TAG, "Local answer set successfully. Draining queued ICE candidates...")
+                                drainPendingIceCandidates()
                                 if (cont.isActive) cont.resume(Result.success(answerSdp))
                             }
                             override fun onCreateFailure(p0: String?) {}
@@ -549,15 +559,16 @@ class WebRtcManager(
         }, constraints)
     }
 
-    fun addRemoteIceCandidate(sdpMid: String, sdpMLineIndex: Int, sdp: String) {
+    fun addRemoteIceCandidate(sdpMid: String?, sdpMLineIndex: Int, sdp: String) {
         try {
-            val candidate = IceCandidate(sdpMid, sdpMLineIndex, sdp)
+            val mid = sdpMid?.takeIf { it.isNotBlank() }
+            val candidate = IceCandidate(mid, sdpMLineIndex, sdp)
             val pc = peerConnection
             if (pc != null && pc.remoteDescription != null) {
                 pc.addIceCandidate(candidate)
-                Log.d(TAG, "Added remote ICE candidate directly: mid=$sdpMid, mLine=$sdpMLineIndex")
+                Log.d(TAG, "Added remote ICE candidate directly: mid=$mid, mLine=$sdpMLineIndex")
             } else {
-                Log.d(TAG, "Queued remote ICE candidate (remoteDescription not set yet): mid=$sdpMid")
+                Log.d(TAG, "Queued remote ICE candidate (remoteDescription not set yet): mid=$mid")
                 pendingIceCandidates.add(candidate)
             }
         } catch (e: Exception) {

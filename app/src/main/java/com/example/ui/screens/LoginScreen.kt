@@ -98,39 +98,37 @@ fun LoginScreen(
         ) {
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Tech Header
+            // Clean Emblem Header
             Box(
                 modifier = Modifier
-                    .size(56.dp)
-                    .clip(RoundedCornerShape(14.dp))
+                    .size(64.dp)
+                    .clip(RoundedCornerShape(18.dp))
                     .background(CyberBgSurfaceElevated)
-                    .border(BorderStroke(1.dp, CyberNeonCyan), RoundedCornerShape(14.dp)),
+                    .border(BorderStroke(1.dp, CyberBorderSubtle.copy(alpha = 0.8f)), RoundedCornerShape(18.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Default.Shield,
                     contentDescription = null,
-                    tint = CyberNeonCyan,
-                    modifier = Modifier.size(28.dp)
+                    tint = CyberElectricEmerald,
+                    modifier = Modifier.size(32.dp)
                 )
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             Text(
-                text = "SIGN IN",
-                fontFamily = FontFamily.Monospace,
+                text = "Welcome to CipherLink",
+                style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
-                fontSize = 22.sp,
-                letterSpacing = 2.sp,
                 color = CyberTextPrimary
             )
 
             Text(
-                text = "Choose how you want to sign in",
+                text = "End-to-end encrypted messaging & calls",
                 style = MaterialTheme.typography.bodyMedium,
                 color = CyberTextSecondary,
-                modifier = Modifier.padding(top = 4.dp)
+                modifier = Modifier.padding(top = 6.dp)
             )
 
             if (activeError != null) {
@@ -139,46 +137,42 @@ fun LoginScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
-                        .background(CyberCrimson.copy(alpha = 0.15f))
-                        .border(BorderStroke(1.dp, CyberCrimson), RoundedCornerShape(12.dp))
+                        .background(CyberCrimson.copy(alpha = 0.12f))
+                        .border(BorderStroke(1.dp, CyberCrimson.copy(alpha = 0.6f)), RoundedCornerShape(12.dp))
                         .padding(14.dp)
                 ) {
                     Text(
                         text = activeError,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         color = CyberCrimson,
                         lineHeight = 16.sp
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(28.dp))
 
             // Primary Method: Continue with Google (Zero-friction 1-Tap)
             CyberCard(
                 modifier = Modifier.fillMaxWidth(),
-                borderGlow = true,
                 cornerRadius = 16.dp
             ) {
-                Column(modifier = Modifier.padding(18.dp)) {
+                Column(modifier = Modifier.padding(20.dp)) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            text = "GOOGLE SIGN-IN",
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            color = CyberElectricEmerald,
-                            letterSpacing = 1.sp
+                            text = "Google Sign-In",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = CyberTextPrimary
                         )
                         CyberBadge(text = "RECOMMENDED", color = CyberElectricEmerald)
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     Text(
                         text = "Quick and secure sign-in with your Google account.",
@@ -186,7 +180,7 @@ fun LoginScreen(
                         color = CyberTextSecondary
                     )
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(18.dp))
 
                     CyberButton(
                         text = if (isLoading) "Signing in..." else "Continue with Google",
@@ -208,18 +202,17 @@ fun LoginScreen(
             ) {
                 HorizontalDivider(
                     modifier = Modifier.weight(1f),
-                    color = CyberBorderSubtle
+                    color = CyberBorderSubtle.copy(alpha = 0.6f)
                 )
                 Text(
                     text = "  OR  ",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 10.sp,
+                    style = MaterialTheme.typography.labelSmall,
                     color = CyberTextMuted,
-                    letterSpacing = 1.5.sp
+                    letterSpacing = 1.sp
                 )
                 HorizontalDivider(
                     modifier = Modifier.weight(1f),
-                    color = CyberBorderSubtle
+                    color = CyberBorderSubtle.copy(alpha = 0.6f)
                 )
             }
 
@@ -231,32 +224,30 @@ fun LoginScreen(
                 borderGlow = false,
                 cornerRadius = 16.dp
             ) {
-                Column(modifier = Modifier.padding(18.dp)) {
+                Column(modifier = Modifier.padding(20.dp)) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            text = "PHONE NUMBER",
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            color = CyberNeonCyan,
-                            letterSpacing = 1.sp
+                            text = "Phone Number",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = CyberTextPrimary
                         )
                         CyberBadge(text = "SMS CODE", color = CyberNeonCyan)
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     Text(
-                        text = "Phone Number (with country code)",
-                        style = MaterialTheme.typography.labelMedium,
+                        text = "Enter your phone number with country code",
+                        style = MaterialTheme.typography.bodySmall,
                         color = CyberTextSecondary
                     )
 
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
                     CyberTextField(
                         value = phoneNumber,
@@ -277,7 +268,7 @@ fun LoginScreen(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
                     )
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
                     CyberButton(
                         text = if (isLoading) "Sending code..." else "Continue with Phone Number",
@@ -294,13 +285,13 @@ fun LoginScreen(
                         enabled = !isLoading
                     )
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
                     Text(
                         text = "We will send an SMS verification code to your phone.",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 10.sp,
-                        color = CyberTextMuted
+                        style = MaterialTheme.typography.bodySmall,
+                        color = CyberTextMuted,
+                        fontSize = 11.sp
                     )
                 }
             }
@@ -315,14 +306,13 @@ fun LoginScreen(
                 Icon(
                     imageVector = Icons.Default.Shield,
                     contentDescription = null,
-                    tint = CyberTextMuted,
-                    modifier = Modifier.size(14.dp)
+                    tint = CyberElectricEmerald.copy(alpha = 0.7f),
+                    modifier = Modifier.size(15.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "End-to-End Encrypted • Private & Secure",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 10.sp,
+                    text = "End-to-End Encrypted • Zero Logs",
+                    style = MaterialTheme.typography.labelSmall,
                     color = CyberTextMuted
                 )
             }

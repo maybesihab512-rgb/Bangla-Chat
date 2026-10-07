@@ -78,6 +78,7 @@ import com.example.ui.theme.CyberBorderSubtle
 import com.example.ui.theme.CyberCrimson
 import com.example.ui.theme.CyberElectricEmerald
 import com.example.ui.theme.CyberNeonCyan
+import com.example.ui.theme.CyberPurple
 import com.example.ui.theme.CyberTextMuted
 import com.example.ui.theme.CyberTextPrimary
 import com.example.ui.theme.CyberTextSecondary
@@ -122,7 +123,6 @@ fun DashboardScreen(
         item {
             CyberCard(
                 modifier = Modifier.fillMaxWidth(),
-                borderGlow = true,
                 cornerRadius = 16.dp
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -140,16 +140,14 @@ fun DashboardScreen(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "CONNECTION & CALL QUALITY",
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = CyberElectricEmerald,
-                                letterSpacing = 0.5.sp
+                                text = "Connection & Call Quality",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = CyberElectricEmerald
                             )
                         }
 
-                        CyberBadge(text = "ENCRYPTED", color = CyberNeonCyan)
+                        CyberBadge(text = "Encrypted", color = CyberNeonCyan)
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -161,15 +159,15 @@ fun DashboardScreen(
                     ) {
                         Column {
                             Text(
-                                text = "Network Speed",
+                                text = "Network Latency",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = CyberTextSecondary
                             )
                             Text(
                                 text = "${state.networkMetrics.rttMs}ms • ${state.networkMetrics.currentAudioBitrateKbps}kbps Opus",
                                 fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
                                 color = CyberTextPrimary
                             )
                         }
@@ -183,12 +181,10 @@ fun DashboardScreen(
         // Quick Navigation Tiles (Chats, Calls, Contacts)
         item {
             Text(
-                text = "OVERVIEW",
-                fontFamily = FontFamily.Monospace,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = CyberTextMuted,
-                letterSpacing = 1.sp
+                text = "Overview",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = CyberTextSecondary
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -199,7 +195,7 @@ fun DashboardScreen(
             ) {
                 QuickNavCard(
                     title = "Chats",
-                    subtitle = "${state.totalUnreadMessages} unread",
+                    subtitle = if (state.totalUnreadMessages > 0) "${state.totalUnreadMessages} unread" else "All caught up",
                     icon = Icons.Default.Chat,
                     accentColor = CyberNeonCyan,
                     badgeCount = state.totalUnreadMessages,
@@ -221,7 +217,7 @@ fun DashboardScreen(
                     title = "Contacts",
                     subtitle = "${state.onlineContactsCount} online",
                     icon = Icons.Default.Contacts,
-                    accentColor = CyberNeonCyan,
+                    accentColor = CyberPurple,
                     badgeCount = 0,
                     onClick = onNavigateToContacts,
                     modifier = Modifier.weight(1f)
@@ -240,18 +236,15 @@ fun DashboardScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "RECENT CHATS",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = CyberTextMuted,
-                    letterSpacing = 1.sp
+                    text = "Recent Chats",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = CyberTextPrimary
                 )
                 Text(
-                    text = "View All →",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    text = "View all",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
                     color = CyberNeonCyan
                 )
             }
@@ -321,18 +314,15 @@ fun DashboardScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "RECENT CALLS",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = CyberTextMuted,
-                    letterSpacing = 1.sp
+                    text = "Recent Calls",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = CyberTextPrimary
                 )
                 Text(
-                    text = "Call History",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    text = "Call history",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
                     color = CyberNeonCyan,
                     modifier = Modifier
                         .clickable(onClick = onNavigateToCalls)

@@ -117,10 +117,6 @@ class CallViewModel(
         }
     }
 
-    fun triggerNetworkReconnect() {
-        callingService.triggerNetworkReconnect()
-    }
-
     fun toggleMic() {
         callingService.toggleMic()
     }

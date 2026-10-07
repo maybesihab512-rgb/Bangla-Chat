@@ -121,17 +121,15 @@ fun SettingsScreen(
 
                 Column {
                     Text(
-                        text = "SETTINGS",
-                        fontFamily = FontFamily.Monospace,
+                        text = "Settings",
+                        style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        letterSpacing = 1.sp,
                         color = CyberTextPrimary
                     )
                     Text(
-                        text = "Preferences and Privacy",
+                        text = "Preferences & Privacy",
                         style = MaterialTheme.typography.bodySmall,
-                        color = CyberNeonCyan,
+                        color = CyberTextSecondary,
                         fontSize = 11.sp
                     )
                 }
@@ -304,12 +302,11 @@ fun SettingsScreen(
                 cornerRadius = 14.dp,
                 backgroundColor = CyberBgSurfaceElevated
             ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         text = "CipherLink for Android v1.0.0",
-                        fontFamily = FontFamily.Monospace,
+                        style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
                         color = CyberTextPrimary
                     )
                     Text(
@@ -318,11 +315,10 @@ fun SettingsScreen(
                         color = CyberTextSecondary,
                         fontSize = 11.sp
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = "Developer: Maybe Sihab  •  +8801646864645",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 10.sp,
+                        style = MaterialTheme.typography.labelSmall,
                         color = CyberTextMuted
                     )
                 }
@@ -337,11 +333,10 @@ fun SettingsScreen(
 private fun SectionHeader(title: String) {
     Text(
         text = title,
-        fontFamily = FontFamily.Monospace,
-        fontWeight = FontWeight.Bold,
-        fontSize = 11.sp,
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.SemiBold,
         color = CyberNeonCyan,
-        letterSpacing = 1.sp,
+        letterSpacing = 0.8.sp,
         modifier = Modifier.padding(bottom = 8.dp)
     )
 }

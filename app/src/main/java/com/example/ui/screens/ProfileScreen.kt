@@ -177,11 +177,9 @@ fun ProfileScreen(
                 Spacer(modifier = Modifier.width(14.dp))
 
                 Text(
-                    text = "PROFILE",
-                    fontFamily = FontFamily.Monospace,
+                    text = "Profile",
+                    style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    letterSpacing = 1.sp,
                     color = CyberTextPrimary
                 )
 
@@ -317,10 +315,9 @@ fun ProfileScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "SAFETY NUMBER",
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
+                                text = "Safety Number",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
                                 color = CyberElectricEmerald
                             )
                         }
@@ -416,10 +413,9 @@ fun ProfileScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "CLOUD SYNC STATUS",
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
+                            text = "Cloud Sync Status",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
                             color = CyberNeonCyan
                         )
                         CyberBadge(text = "CONNECTED", color = CyberElectricEmerald)

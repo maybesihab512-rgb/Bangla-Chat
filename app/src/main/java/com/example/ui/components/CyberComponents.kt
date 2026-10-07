@@ -87,7 +87,7 @@ import com.example.ui.theme.CyberTextSecondary
 fun CyberCard(
     modifier: Modifier = Modifier,
     borderGlow: Boolean = false,
-    borderColor: Color = if (borderGlow) CyberBorderGlow else CyberBorderSubtle,
+    borderColor: Color = if (borderGlow) CyberBorderGlow else CyberBorderSubtle.copy(alpha = 0.8f),
     backgroundColor: Color = CyberBgCard,
     cornerRadius: Dp = 16.dp,
     onClick: (() -> Unit)? = null,
@@ -132,14 +132,14 @@ fun CyberButton(
         modifier = modifier
             .defaultMinSize(minHeight = 48.dp)
             .fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = accentColor,
             contentColor = textColor,
             disabledContainerColor = CyberBgSurfaceElevated,
             disabledContentColor = CyberTextMuted
         ),
-        elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp)
+        elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp, pressedElevation = 1.dp)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -156,8 +156,8 @@ fun CyberButton(
             Text(
                 text = text,
                 style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 0.5.sp
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.2.sp
             )
         }
     }
@@ -169,7 +169,7 @@ fun CyberOutlinedButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
-    borderColor: Color = CyberBorderGlow,
+    borderColor: Color = CyberBorderSubtle,
     textColor: Color = CyberNeonCyan
 ) {
     OutlinedButton(
@@ -177,7 +177,7 @@ fun CyberOutlinedButton(
         modifier = modifier
             .defaultMinSize(minHeight = 48.dp)
             .fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
         border = BorderStroke(1.dp, borderColor),
         colors = ButtonDefaults.outlinedButtonColors(
             contentColor = textColor
@@ -216,18 +216,18 @@ fun CyberBadge(
 ) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(6.dp),
+        shape = RoundedCornerShape(100.dp),
         color = backgroundColor,
-        border = BorderStroke(0.5.dp, color.copy(alpha = 0.4f))
+        border = BorderStroke(0.5.dp, color.copy(alpha = 0.35f))
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (hasDot) {
                 Box(
                     modifier = Modifier
-                        .size(6.dp)
+                        .size(5.dp)
                         .clip(CircleShape)
                         .background(color)
                 )
@@ -235,11 +235,10 @@ fun CyberBadge(
             }
             Text(
                 text = text,
-                fontFamily = FontFamily.Monospace,
                 fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 color = color,
-                letterSpacing = 0.5.sp
+                letterSpacing = 0.3.sp
             )
         }
     }
@@ -250,7 +249,7 @@ fun AvatarWithStatus(
     initials: String,
     modifier: Modifier = Modifier,
     photoUrl: String? = null,
-    colorHex: Long = 0xFF00F0FF,
+    colorHex: Long = 0xFF38BDF8,
     size: Dp = 48.dp,
     isOnline: Boolean = false,
     showShield: Boolean = false
@@ -266,7 +265,7 @@ fun AvatarWithStatus(
                 modifier = Modifier
                     .size(size)
                     .clip(CircleShape)
-                    .border(BorderStroke(1.5.dp, baseColor.copy(alpha = 0.8f)), CircleShape)
+                    .border(BorderStroke(1.dp, CyberBorderSubtle), CircleShape)
             ) {
                 AsyncImage(
                     model = photoUrl,
@@ -290,14 +289,13 @@ fun AvatarWithStatus(
                             )
                         )
                     )
-                    .border(BorderStroke(1.5.dp, baseColor.copy(alpha = 0.6f)), CircleShape),
+                    .border(BorderStroke(1.dp, baseColor.copy(alpha = 0.35f)), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = initials.take(2).uppercase().ifEmpty { "U" },
                     color = CyberTextPrimary,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.SemiBold,
                     fontSize = (size.value * 0.38f).sp
                 )
             }
@@ -307,7 +305,7 @@ fun AvatarWithStatus(
         if (isOnline) {
             Box(
                 modifier = Modifier
-                    .size(size * 0.3f)
+                    .size(size * 0.28f)
                     .align(Alignment.BottomEnd)
                     .clip(CircleShape)
                     .background(CyberOnline)
@@ -316,7 +314,7 @@ fun AvatarWithStatus(
         } else if (showShield) {
             Box(
                 modifier = Modifier
-                    .size(size * 0.34f)
+                    .size(size * 0.32f)
                     .align(Alignment.BottomEnd)
                     .clip(CircleShape)
                     .background(CyberBgDark)
@@ -327,7 +325,7 @@ fun AvatarWithStatus(
                     imageVector = Icons.Default.Shield,
                     contentDescription = "Verified E2EE",
                     tint = CyberNeonCyan,
-                    modifier = Modifier.size(size * 0.22f)
+                    modifier = Modifier.size(size * 0.2f)
                 )
             }
         }
@@ -468,7 +466,7 @@ fun CyberTextField(
             keyboardOptions = keyboardOptions,
             keyboardActions = keyboardActions,
             singleLine = singleLine,
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(14.dp),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedContainerColor = CyberBgCard,
                 unfocusedContainerColor = CyberBgSurface,

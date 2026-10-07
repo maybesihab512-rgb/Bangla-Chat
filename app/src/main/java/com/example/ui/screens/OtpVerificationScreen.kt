@@ -104,10 +104,10 @@ fun OtpVerificationScreen(
                 IconButton(
                     onClick = onBack,
                     modifier = Modifier
-                        .size(44.dp)
+                        .size(40.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(CyberBgSurface)
-                        .border(BorderStroke(1.dp, CyberBorderSubtle), RoundedCornerShape(10.dp))
+                        .border(BorderStroke(1.dp, CyberBorderSubtle.copy(alpha = 0.8f)), RoundedCornerShape(10.dp))
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
@@ -117,11 +117,9 @@ fun OtpVerificationScreen(
                 }
                 Spacer(modifier = Modifier.width(16.dp))
                 Text(
-                    text = "VERIFY CODE",
-                    fontFamily = FontFamily.Monospace,
+                    text = "Verify Code",
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    letterSpacing = 1.sp,
                     color = CyberTextPrimary
                 )
             }
@@ -132,16 +130,16 @@ fun OtpVerificationScreen(
             Box(
                 modifier = Modifier
                     .size(64.dp)
-                    .clip(RoundedCornerShape(16.dp))
+                    .clip(RoundedCornerShape(18.dp))
                     .background(CyberBgSurfaceElevated)
-                    .border(BorderStroke(1.dp, CyberNeonCyan), RoundedCornerShape(16.dp)),
+                    .border(BorderStroke(1.dp, CyberBorderSubtle.copy(alpha = 0.8f)), RoundedCornerShape(18.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = Icons.Default.Lock,
                     contentDescription = null,
                     tint = CyberNeonCyan,
-                    modifier = Modifier.size(32.dp)
+                    modifier = Modifier.size(30.dp)
                 )
             }
 
@@ -149,9 +147,8 @@ fun OtpVerificationScreen(
 
             Text(
                 text = "Enter Verification Code",
-                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
-                fontSize = 20.sp,
                 color = CyberTextPrimary
             )
 
@@ -165,9 +162,8 @@ fun OtpVerificationScreen(
 
             Text(
                 text = phoneNumber,
-                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp,
                 color = CyberNeonCyan,
                 modifier = Modifier.padding(top = 2.dp)
             )
@@ -196,7 +192,7 @@ fun OtpVerificationScreen(
                                 errorMessage != null -> CyberCrimson
                                 isFocused -> CyberNeonCyan
                                 char.isNotEmpty() -> CyberElectricEmerald
-                                else -> CyberBorderSubtle
+                                else -> CyberBorderSubtle.copy(alpha = 0.8f)
                             }
 
                             Box(
@@ -204,16 +200,15 @@ fun OtpVerificationScreen(
                                     .weight(1f)
                                     .height(56.dp)
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(CyberBgCard)
-                                    .border(BorderStroke(1.5.dp, borderColor), RoundedCornerShape(12.dp)),
+                                    .background(CyberBgSurfaceElevated)
+                                    .border(BorderStroke(1.2.dp, borderColor), RoundedCornerShape(12.dp)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
                                     text = char,
-                                    fontFamily = FontFamily.Monospace,
+                                    style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 22.sp,
-                                    color = if (char.isNotEmpty()) CyberNeonCyan else CyberTextMuted,
+                                    color = if (char.isNotEmpty()) CyberTextPrimary else CyberTextMuted,
                                     textAlign = TextAlign.Center
                                 )
                             }

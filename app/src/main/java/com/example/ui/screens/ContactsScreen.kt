@@ -161,15 +161,13 @@ fun ContactsScreen(
 
                 Column {
                     Text(
-                        text = "CONTACTS",
-                        fontFamily = FontFamily.Monospace,
+                        text = "Contacts",
+                        style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        letterSpacing = 1.sp,
                         color = CyberTextPrimary
                     )
                     Text(
-                        text = "${contacts.size} Registered Contacts",
+                        text = "${contacts.size} contacts",
                         style = MaterialTheme.typography.bodySmall,
                         color = CyberElectricEmerald,
                         fontSize = 11.sp
@@ -233,8 +231,7 @@ fun ContactsScreen(
                             ) {
                                 Text(
                                     text = "No registered users found matching \"$searchQuery\"",
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 12.sp,
+                                    style = MaterialTheme.typography.bodyMedium,
                                     color = CyberTextMuted
                                 )
                             }
@@ -261,11 +258,11 @@ fun ContactsScreen(
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text(
                                         text = "No contacts yet",
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 13.sp,
-                                        color = CyberTextMuted
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = CyberTextPrimary
                                     )
-                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Spacer(modifier = Modifier.height(6.dp))
                                     Text(
                                         text = "Search users above or tap '+' to find registered users",
                                         style = MaterialTheme.typography.bodySmall,

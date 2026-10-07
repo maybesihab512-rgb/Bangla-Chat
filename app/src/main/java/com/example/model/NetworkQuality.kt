@@ -2,12 +2,17 @@ package com.example.model
 
 enum class ConnectionState {
     IDLE,
+    CALLING,
+    RINGING,
     CONNECTING,
     SECURE_HANDSHAKE,
     CONNECTED,
     RECONNECTING,
     DISCONNECTED,
-    FAILED
+    ENDED,
+    DECLINED,
+    FAILED,
+    MISSED
 }
 
 enum class NetworkTier {

@@ -135,35 +135,33 @@ fun SplashScreen(
             Spacer(modifier = Modifier.height(28.dp))
 
             Text(
-                text = "CIPHERLINK",
-                fontFamily = FontFamily.Monospace,
+                text = "CipherLink",
+                style = MaterialTheme.typography.headlineLarge,
                 fontWeight = FontWeight.Bold,
-                fontSize = 26.sp,
-                letterSpacing = 4.sp,
+                letterSpacing = 1.sp,
                 color = CyberTextPrimary
             )
 
             Spacer(modifier = Modifier.height(6.dp))
 
             Text(
-                text = "Secure Messaging & Calling",
-                style = MaterialTheme.typography.bodySmall,
-                color = CyberNeonCyan,
-                letterSpacing = 1.sp
+                text = "Private Messaging & HD Calls",
+                style = MaterialTheme.typography.bodyMedium,
+                color = CyberTextSecondary
             )
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(28.dp))
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 CyberBadge(text = "END-TO-END ENCRYPTED", color = CyberElectricEmerald)
                 CyberBadge(text = "HD AUDIO & VIDEO", color = CyberNeonCyan)
             }
 
-            Spacer(modifier = Modifier.height(48.dp))
+            Spacer(modifier = Modifier.height(44.dp))
 
             LinearProgressIndicator(
                 modifier = Modifier
-                    .width(180.dp)
+                    .width(160.dp)
                     .height(3.dp)
                     .clip(RoundedCornerShape(2.dp)),
                 color = CyberNeonCyan,
@@ -173,27 +171,25 @@ fun SplashScreen(
             Spacer(modifier = Modifier.height(14.dp))
 
             Text(
-                text = "CONNECTING...",
-                fontFamily = FontFamily.Monospace,
-                fontSize = 10.sp,
+                text = "Connecting securely...",
+                style = MaterialTheme.typography.bodySmall,
                 color = CyberTextMuted,
-                letterSpacing = 1.sp
+                fontSize = 11.sp
             )
         }
 
         // Tap to skip
         Text(
-            text = "TAP TO CONTINUE",
-            fontFamily = FontFamily.Monospace,
-            fontSize = 11.sp,
-            color = CyberNeonCyan.copy(alpha = 0.8f),
+            text = "Tap to continue",
+            style = MaterialTheme.typography.labelSmall,
+            color = CyberTextSecondary,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 32.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .border(BorderStroke(0.5.dp, CyberBorderSubtle), RoundedCornerShape(8.dp))
+                .clip(RoundedCornerShape(20.dp))
+                .border(BorderStroke(0.5.dp, CyberBorderSubtle.copy(alpha = 0.8f)), RoundedCornerShape(20.dp))
                 .background(CyberBgSurface.copy(alpha = 0.8f))
-                .padding(horizontal = 14.dp, vertical = 8.dp)
+                .padding(horizontal = 16.dp, vertical = 8.dp)
         )
     }
 }

@@ -144,9 +144,9 @@ fun ChatsScreen(
                     onClick = onNavigateBack,
                     modifier = Modifier
                         .size(40.dp)
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(RoundedCornerShape(12.dp))
                         .background(CyberBgSurface)
-                        .border(BorderStroke(1.dp, CyberBorderSubtle), RoundedCornerShape(10.dp))
+                        .border(BorderStroke(1.dp, CyberBorderSubtle), RoundedCornerShape(12.dp))
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
@@ -159,17 +159,15 @@ fun ChatsScreen(
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "CHATS",
-                        fontFamily = FontFamily.Monospace,
+                        text = "Chats",
+                        style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        letterSpacing = 1.sp,
                         color = CyberTextPrimary
                     )
                     Text(
-                        text = "Private & Secure Messaging",
+                        text = "End-to-End Encrypted",
                         style = MaterialTheme.typography.bodySmall,
-                        color = CyberNeonCyan,
+                        color = CyberElectricEmerald,
                         fontSize = 11.sp
                     )
                 }
@@ -178,14 +176,14 @@ fun ChatsScreen(
                     onClick = { showNewChatSheet = true },
                     modifier = Modifier
                         .size(40.dp)
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(RoundedCornerShape(12.dp))
                         .background(CyberBgSurface)
-                        .border(BorderStroke(1.dp, CyberBorderSubtle), RoundedCornerShape(10.dp))
+                        .border(BorderStroke(1.dp, CyberBorderSubtle), RoundedCornerShape(12.dp))
                 ) {
                     Icon(
                         imageVector = Icons.Default.PersonAdd,
                         contentDescription = "New Chat",
-                        tint = CyberElectricEmerald,
+                        tint = CyberNeonCyan,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -197,10 +195,10 @@ fun ChatsScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(CyberBgSurface)
-                    .border(BorderStroke(1.dp, CyberBorderSubtle), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 12.dp, vertical = 2.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(CyberBgSurfaceElevated)
+                    .border(BorderStroke(1.dp, CyberBorderSubtle), RoundedCornerShape(20.dp))
+                    .padding(horizontal = 14.dp, vertical = 2.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -209,7 +207,7 @@ fun ChatsScreen(
                     Icon(
                         imageVector = Icons.Default.Search,
                         contentDescription = null,
-                        tint = CyberNeonCyan,
+                        tint = CyberTextMuted,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
@@ -218,7 +216,7 @@ fun ChatsScreen(
                         onValueChange = { viewModel.setSearchQuery(it) },
                         placeholder = {
                             Text(
-                                "Search chats...",
+                                "Search conversations...",
                                 color = CyberTextMuted,
                                 fontSize = 13.sp
                             )
@@ -261,7 +259,7 @@ fun ChatsScreen(
                 items(ChatFilter.values()) { filter ->
                     val isSelected = selectedFilter == filter
                     val filterLabel = when (filter) {
-                        ChatFilter.ALL -> "All Chats"
+                        ChatFilter.ALL -> "All"
                         ChatFilter.DIRECT -> "Direct"
                         ChatFilter.GROUPS -> "Groups"
                         ChatFilter.UNREAD -> "Unread"
@@ -269,23 +267,22 @@ fun ChatsScreen(
 
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(100.dp))
                             .background(if (isSelected) CyberNeonCyan else CyberBgSurfaceElevated)
                             .border(
                                 BorderStroke(
                                     1.dp,
                                     if (isSelected) CyberNeonCyan else CyberBorderSubtle
                                 ),
-                                RoundedCornerShape(8.dp)
+                                RoundedCornerShape(100.dp)
                             )
                             .clickable { viewModel.setFilter(filter) }
                             .padding(horizontal = 14.dp, vertical = 6.dp)
                     ) {
                         Text(
                             text = filterLabel,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 11.sp,
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                             color = if (isSelected) CyberBgDark else CyberTextSecondary
                         )
                     }
@@ -680,8 +677,7 @@ private fun ConversationCard(
 
                     Text(
                         text = conversation.lastMessage?.formattedTime ?: "",
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 10.sp,
+                        style = MaterialTheme.typography.labelSmall,
                         color = CyberTextMuted
                     )
                 }
@@ -724,6 +720,7 @@ private fun ConversationCard(
                                 text = conversation.lastMessage?.content ?: "No messages yet",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = if (conversation.unreadCount > 0) CyberTextPrimary else CyberTextSecondary,
+                                fontWeight = if (conversation.unreadCount > 0) FontWeight.Medium else FontWeight.Normal,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -734,15 +731,14 @@ private fun ConversationCard(
                         Spacer(modifier = Modifier.width(8.dp))
                         Box(
                             modifier = Modifier
-                                .clip(CircleShape)
+                                .clip(RoundedCornerShape(100.dp))
                                 .background(CyberNeonCyan)
-                                .padding(horizontal = 7.dp, vertical = 2.dp)
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
                                 text = conversation.unreadCount.toString(),
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold,
                                 fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
                                 color = CyberBgDark
                             )
                         }

@@ -21,10 +21,10 @@ object CipherAppContainer {
 
     val authRepository: AuthRepository by lazy { AuthRepository(getContext()) }
     val chatRepository: ChatRepository by lazy { ChatRepository(getContext(), authRepository) }
-    val callRepository: CallRepository by lazy { CallRepository() }
+    val callRepository: CallRepository by lazy { CallRepository(getContext(), authRepository) }
     val userRepository: UserRepository by lazy { UserRepository(getContext(), authRepository) }
     val settingsRepository: SettingsRepository by lazy { SettingsRepository() }
-    val callingService: CallingService by lazy { CallingService(getContext(), authRepository) }
+    val callingService: CallingService by lazy { CallingService(getContext(), authRepository, callRepository) }
     val draftManager: DraftManager by lazy { DraftManager(getContext()) }
     val chatSecurityManager: ChatSecurityManager by lazy { ChatSecurityManager(getContext()) }
     val audioRecordManager: com.example.data.audio.AudioRecordManager by lazy { com.example.data.audio.AudioRecordManager(getContext()) }

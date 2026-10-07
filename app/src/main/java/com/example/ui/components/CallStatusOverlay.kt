@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -123,8 +124,7 @@ fun CallStatusOverlay(
                     Spacer(modifier = Modifier.width(3.dp))
                     Text(
                         text = pingLabel,
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = CyberTextPrimary
                     )
@@ -141,9 +141,8 @@ fun CallStatusOverlay(
                 // Packet Loss indicator
                 Text(
                     text = lossLabel,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Medium,
                     color = if (metrics.packetLossPercent > 3f) CyberCrimson else CyberTextSecondary
                 )
 
@@ -169,8 +168,8 @@ fun CallStatusOverlay(
                     .fillMaxWidth()
                     .testTag("call_status_expanded_card"),
                 shape = RoundedCornerShape(12.dp),
-                color = CyberBgCard.copy(alpha = 0.95f),
-                border = BorderStroke(1.dp, CyberNeonCyan.copy(alpha = 0.4f))
+                color = CyberBgSurfaceElevated.copy(alpha = 0.95f),
+                border = BorderStroke(1.dp, CyberBorderSubtle)
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Row(
@@ -187,11 +186,10 @@ fun CallStatusOverlay(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "WEBRTC REAL-TIME TELEMETRY",
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = CyberNeonCyan
+                                text = "WebRTC Live Telemetry",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                color = CyberTextPrimary
                             )
                         }
 

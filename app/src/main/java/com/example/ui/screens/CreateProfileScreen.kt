@@ -99,17 +99,15 @@ fun CreateProfileScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "PROFILE SETUP",
-                fontFamily = FontFamily.Monospace,
+                text = "Set up your profile",
+                style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
-                fontSize = 20.sp,
-                letterSpacing = 2.sp,
                 color = CyberTextPrimary
             )
 
             Text(
-                text = "Set up your name, username and status",
-                style = MaterialTheme.typography.bodySmall,
+                text = "Enter your display name and public handle",
+                style = MaterialTheme.typography.bodyMedium,
                 color = CyberTextSecondary,
                 modifier = Modifier.padding(top = 4.dp)
             )
@@ -223,10 +221,9 @@ fun CreateProfileScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
-                            text = "PRIVACY & SECURITY",
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
+                            text = "Privacy & Security",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
                             color = CyberElectricEmerald
                         )
                         Text(

@@ -19,7 +19,7 @@ class CipherFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         super.onMessageReceived(remoteMessage)
-        Log.d(TAG, "From: ${remoteMessage.from}")
+        Log.d(TAG, "FCM message received from: ${remoteMessage.from}")
 
         val data = remoteMessage.data
         if (data.isNotEmpty()) {
@@ -30,22 +30,50 @@ class CipherFirebaseMessagingService : FirebaseMessagingService() {
                     val senderId = data["senderId"] ?: ""
                     val senderName = data["senderName"] ?: "Contact"
                     val messageText = data["messageText"] ?: data["content"] ?: "New message"
+                    val isGroup = data["isGroup"]?.equals("true", ignoreCase = true) == true
+                    val groupTitle = data["groupTitle"] ?: "Group Chat"
 
-                    val isLocked = try {
-                        CipherAppContainer.chatSecurityManager.isChatLocked(conversationId)
-                    } catch (e: Exception) {
-                        false
+                    if (isGroup) {
+                        CipherNotificationManager.showGroupMessageNotification(
+                            context = applicationContext,
+                            conversationId = conversationId,
+                            groupTitle = groupTitle,
+                            senderName = senderName,
+                            messageText = messageText
+                        )
+                    } else {
+                        val isLocked = try {
+                            CipherAppContainer.chatSecurityManager.isChatLocked(conversationId)
+                        } catch (e: Exception) {
+                            false
+                        }
+
+                        CipherNotificationManager.showMessageNotification(
+                            context = applicationContext,
+                            conversationId = conversationId,
+                            senderId = senderId,
+                            senderName = senderName,
+                            messageText = messageText,
+                            isLockedChat = isLocked
+                        )
                     }
+                }
 
-                    CipherNotificationManager.showMessageNotification(
+                "incoming_call" -> {
+                    val callId = data["callId"] ?: ""
+                    val callerId = data["callerId"] ?: ""
+                    val callerName = data["callerName"] ?: "Contact"
+                    val isVideo = data["callType"]?.equals("VIDEO", ignoreCase = true) == true
+
+                    CipherNotificationManager.showIncomingCallNotification(
                         context = applicationContext,
-                        conversationId = conversationId,
-                        senderId = senderId,
-                        senderName = senderName,
-                        messageText = messageText,
-                        isLockedChat = isLocked
+                        callId = callId,
+                        callerId = callerId,
+                        callerName = callerName,
+                        isVideo = isVideo
                     )
                 }
+
                 "missed_call" -> {
                     val callId = data["callId"] ?: ""
                     val callerId = data["callerId"] ?: ""
@@ -60,6 +88,31 @@ class CipherFirebaseMessagingService : FirebaseMessagingService() {
                         isVideo = isVideo
                     )
                 }
+
+                "group_invite", "group_update" -> {
+                    val groupId = data["groupId"] ?: data["conversationId"] ?: ""
+                    val groupTitle = data["groupTitle"] ?: "New Group"
+                    val inviterName = data["inviterName"] ?: "Someone"
+
+                    CipherNotificationManager.showGroupInviteNotification(
+                        context = applicationContext,
+                        groupId = groupId,
+                        groupTitle = groupTitle,
+                        inviterName = inviterName
+                    )
+                }
+
+                "account_event", "security_alert" -> {
+                    val title = data["title"] ?: "Security Alert"
+                    val message = data["message"] ?: data["body"] ?: "New account activity detected"
+
+                    CipherNotificationManager.showSecurityAlertNotification(
+                        context = applicationContext,
+                        title = title,
+                        message = message
+                    )
+                }
+
                 "update", "announcement" -> {
                     val title = data["title"] ?: "CipheLink Update"
                     val body = data["body"] ?: data["message"] ?: "Important app announcement"

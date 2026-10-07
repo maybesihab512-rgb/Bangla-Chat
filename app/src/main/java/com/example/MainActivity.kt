@@ -28,8 +28,11 @@ class MainActivity : FragmentActivity() {
         private const val REQUEST_CODE_NOTIFICATIONS = 1010
     }
 
+    private var pendingNotificationIntent by androidx.compose.runtime.mutableStateOf<Intent?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingNotificationIntent = intent
         CipherAppContainer.initialize(this)
         CipherNotificationManager.initialize(this)
         enableEdgeToEdge()
@@ -43,7 +46,10 @@ class MainActivity : FragmentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = CyberBgDark
                 ) {
-                    CipherNavHost()
+                    CipherNavHost(
+                        intent = pendingNotificationIntent,
+                        onIntentHandled = { pendingNotificationIntent = null }
+                    )
                 }
             }
         }
@@ -52,6 +58,7 @@ class MainActivity : FragmentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        pendingNotificationIntent = intent
         handleCallIntent(intent)
     }
 
