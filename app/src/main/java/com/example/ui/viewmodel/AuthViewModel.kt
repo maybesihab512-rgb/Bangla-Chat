@@ -64,13 +64,14 @@ class AuthViewModel(
         phoneNumber: String,
         photoUri: Uri?,
         statusMessage: String,
+        removePhoto: Boolean = false,
         onSuccess: () -> Unit = {},
         onError: (String) -> Unit = {}
     ) {
         viewModelScope.launch {
             _isUpdatingProfile.value = true
             _profileUpdateError.value = null
-            val result = authRepository.updateProfile(displayName, phoneNumber, photoUri, statusMessage)
+            val result = authRepository.updateProfile(displayName, phoneNumber, photoUri, statusMessage, removePhoto)
             _isUpdatingProfile.value = false
             result.onSuccess {
                 onSuccess()

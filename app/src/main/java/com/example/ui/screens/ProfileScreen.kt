@@ -105,6 +105,7 @@ fun ProfileScreen(
     var editPhoneNumber by remember(currentUser) { mutableStateOf(currentUser?.phone ?: "") }
     var editStatusMessage by remember(currentUser) { mutableStateOf(currentUser?.statusMessage ?: "Available") }
     var editPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    var removePhotoFlag by remember { mutableStateOf(false) }
     var phoneValidationError by remember { mutableStateOf<String?>(null) }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -475,7 +476,7 @@ fun ProfileScreen(
                 ) {
                     AvatarWithStatus(
                         initials = editDisplayName.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("").ifEmpty { "U" },
-                        photoUrl = editPhotoUri?.toString() ?: user.photoUrl,
+                        photoUrl = if (removePhotoFlag) "" else (editPhotoUri?.toString() ?: user.photoUrl),
                         size = 64.dp,
                         isOnline = true
                     )
@@ -484,6 +485,7 @@ fun ProfileScreen(
                         CyberOutlinedButton(
                             text = if (editPhotoUri != null) "Change Selected" else "Change Photo",
                             onClick = {
+                                removePhotoFlag = false
                                 photoPickerLauncher.launch(
                                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                                 )
@@ -491,12 +493,33 @@ fun ProfileScreen(
                             icon = Icons.Default.CameraAlt,
                             modifier = Modifier.fillMaxWidth()
                         )
-                        if (editPhotoUri != null) {
+                        if ((user.photoUrl.isNotBlank() || editPhotoUri != null) && !removePhotoFlag) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            CyberOutlinedButton(
+                                text = "Remove Photo",
+                                onClick = {
+                                    removePhotoFlag = true
+                                    editPhotoUri = null
+                                },
+                                borderColor = CyberCrimson,
+                                textColor = CyberCrimson,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        if (editPhotoUri != null && !removePhotoFlag) {
                             Text(
                                 text = "New photo selected (unsaved)",
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 10.sp,
                                 color = CyberElectricEmerald,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        } else if (removePhotoFlag) {
+                            Text(
+                                text = "Photo will be removed",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                color = CyberCrimson,
                                 modifier = Modifier.padding(top = 4.dp)
                             )
                         }
@@ -583,8 +606,10 @@ fun ProfileScreen(
                                 phoneNumber = editPhoneNumber.trim(),
                                 photoUri = editPhotoUri,
                                 statusMessage = editStatusMessage.trim(),
+                                removePhoto = removePhotoFlag,
                                 onSuccess = {
                                     editPhotoUri = null
+                                    removePhotoFlag = false
                                     phoneValidationError = null
                                     Toast.makeText(context, "Profile updated successfully", Toast.LENGTH_SHORT).show()
                                     showEditProfileSheet = false

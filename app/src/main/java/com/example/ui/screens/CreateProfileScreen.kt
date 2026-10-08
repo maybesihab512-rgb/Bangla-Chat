@@ -1,5 +1,9 @@
 package com.example.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,6 +28,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AlternateEmail
 import androidx.compose.material.icons.filled.Badge
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
@@ -71,14 +76,23 @@ import com.example.ui.theme.CyberTextSecondary
 @Composable
 fun CreateProfileScreen(
     currentUser: User?,
-    onSaveProfile: (name: String, handle: String, status: String) -> Unit,
+    onSaveProfile: (name: String, handle: String, status: String, photoUri: Uri?) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var displayName by remember { mutableStateOf(currentUser?.name ?: "") }
     var handle by remember { mutableStateOf(currentUser?.handle ?: "") }
     var statusMessage by remember { mutableStateOf(currentUser?.statusMessage ?: "Available") }
     var selectedColorHex by remember { mutableLongStateOf(currentUser?.avatarColorHex ?: 0xFF00F0FF) }
+    var selectedPhotoUri by remember { mutableStateOf<Uri?>(null) }
     var isError by remember { mutableStateOf(false) }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            selectedPhotoUri = uri
+        }
+    }
 
     val colorOptions = listOf(0xFF00F0FF, 0xFF00E699, 0xFFFFB020, 0xFFA855F7, 0xFFFF3366)
 
@@ -114,16 +128,39 @@ fun CreateProfileScreen(
 
             Spacer(modifier = Modifier.height(28.dp))
 
-            // Avatar Preview with color picker
+            // Avatar Preview with color picker & photo change badge
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                AvatarWithStatus(
-                    initials = displayName.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("").ifEmpty { "OP" },
-                    colorHex = selectedColorHex,
-                    size = 80.dp,
-                    isOnline = true
-                )
+                Box(contentAlignment = Alignment.BottomEnd) {
+                    AvatarWithStatus(
+                        initials = displayName.split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("").ifEmpty { "OP" },
+                        photoUrl = selectedPhotoUri?.toString() ?: (currentUser?.photoUrl ?: ""),
+                        colorHex = selectedColorHex,
+                        size = 88.dp,
+                        isOnline = true
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(CircleShape)
+                            .background(CyberNeonCyan)
+                            .border(BorderStroke(2.dp, CyberBgDark), CircleShape)
+                            .clickable {
+                                photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CameraAlt,
+                            contentDescription = "Choose photo",
+                            tint = CyberBgDark,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(14.dp))
 
@@ -241,7 +278,7 @@ fun CreateProfileScreen(
                 text = "Save Profile & Continue",
                 onClick = {
                     if (displayName.isNotBlank()) {
-                        onSaveProfile(displayName.trim(), handle.trim(), statusMessage.trim())
+                        onSaveProfile(displayName.trim(), handle.trim(), statusMessage.trim(), selectedPhotoUri)
                     } else {
                         isError = true
                     }

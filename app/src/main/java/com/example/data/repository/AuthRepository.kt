@@ -418,14 +418,15 @@ class AuthRepository(
         displayName: String,
         phoneNumber: String,
         photoUri: Uri?,
-        statusMessage: String
+        statusMessage: String,
+        removePhoto: Boolean = false
     ): Result<User> {
         val currentUid = auth.currentUser?.uid ?: return Result.failure(IllegalStateException("User not logged in"))
         val current = _currentUser.value ?: return Result.failure(IllegalStateException("No current user"))
 
         return try {
-            var uploadedPhotoUrl = current.photoUrl
-            if (photoUri != null) {
+            var uploadedPhotoUrl = if (removePhoto) "" else current.photoUrl
+            if (!removePhoto && photoUri != null) {
                 val storageRef = FirebaseStorage.getInstance().reference
                     .child("profile_photos")
                     .child(currentUid)
@@ -474,6 +475,23 @@ class AuthRepository(
                 "updatedAt" to FieldValue.serverTimestamp()
             )
             db.collection("users").document(currentUid).set(data, SetOptions.merge()).await()
+
+            // Propagate updated name and photo to conversations where user participates
+            scope.launch {
+                try {
+                    val userConvs = db.collection("conversations")
+                        .whereArrayContains("participantIds", currentUid)
+                        .get().await()
+                    for (doc in userConvs.documents) {
+                        doc.reference.update(
+                            "participantNames.$currentUid", cleanName,
+                            "participantPhotos.$currentUid", uploadedPhotoUrl.ifEmpty { initials.uppercase() }
+                        )
+                    }
+                } catch (e: Exception) {
+                    Log.w("Auth", "Failed updating participant info in conversations: ${e.message}")
+                }
+            }
 
             _currentUser.value = updatedUser
             _authStatus.value = AuthStatus.Success(updatedUser)

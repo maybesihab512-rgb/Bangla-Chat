@@ -12,7 +12,8 @@ enum class DeliveryStatus {
     SENDING,
     SENT,
     DELIVERED,
-    SEEN
+    SEEN,
+    FAILED
 }
 
 data class Message(

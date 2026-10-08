@@ -208,8 +208,8 @@ class UserRepository(
         val now = System.currentTimeMillis()
         val lastSeenMs = fu.lastSeen?.toDate()?.time ?: 0L
         val diffMs = now - lastSeenMs
-        // Accurate presence: genuine online only if status is online AND last heartbeat within 90 seconds
-        val isOnline = fu.onlineStatus == "online" && (lastSeenMs > 0 && diffMs < 90_000L)
+        // Accurate presence: genuine online only if status is online AND heartbeat within 120 seconds
+        val isOnline = fu.onlineStatus == "online" && (lastSeenMs <= 0 || diffMs < 120_000L)
         val lastSeenStr = formatLastSeen(fu.lastSeen, isOnline)
 
         val isPhotoUrl = fu.profilePhoto.startsWith("http://") ||

@@ -1,15 +1,10 @@
 package com.example.ui.components
 
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,14 +23,12 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DoneAll
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -43,8 +36,6 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,8 +43,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -71,14 +60,11 @@ import com.example.ui.theme.CyberBgSurfaceElevated
 import com.example.ui.theme.CyberBorderGlow
 import com.example.ui.theme.CyberBorderSubtle
 import com.example.ui.theme.CyberCrimson
-import com.example.ui.theme.CyberCyanSubtle
 import com.example.ui.theme.CyberElectricEmerald
 import com.example.ui.theme.CyberNeonCyan
 import com.example.ui.theme.CyberOnline
 import com.example.ui.theme.CyberTextDisabled
 import com.example.ui.theme.CyberTextMuted
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
 import com.example.ui.theme.CyberTextPrimary
 import com.example.ui.theme.CyberTextSecondary
 
@@ -87,7 +73,7 @@ import com.example.ui.theme.CyberTextSecondary
 fun CyberCard(
     modifier: Modifier = Modifier,
     borderGlow: Boolean = false,
-    borderColor: Color = if (borderGlow) CyberBorderGlow else CyberBorderSubtle.copy(alpha = 0.8f),
+    borderColor: Color = if (borderGlow) CyberBorderGlow else CyberBorderSubtle.copy(alpha = 0.6f),
     backgroundColor: Color = CyberBgCard,
     cornerRadius: Dp = 16.dp,
     onClick: (() -> Unit)? = null,
@@ -124,7 +110,7 @@ fun CyberButton(
     icon: ImageVector? = null,
     enabled: Boolean = true,
     accentColor: Color = CyberNeonCyan,
-    textColor: Color = CyberBgDark
+    textColor: Color = Color.White
 ) {
     Button(
         onClick = onClick,
@@ -156,8 +142,7 @@ fun CyberButton(
             Text(
                 text = text,
                 style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.2.sp
+                fontWeight = FontWeight.SemiBold
             )
         }
     }
@@ -221,7 +206,7 @@ fun CyberBadge(
         border = BorderStroke(0.5.dp, color.copy(alpha = 0.35f))
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (hasDot) {
@@ -235,10 +220,9 @@ fun CyberBadge(
             }
             Text(
                 text = text,
-                fontSize = 10.sp,
+                style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold,
-                color = color,
-                letterSpacing = 0.3.sp
+                color = color
             )
         }
     }
@@ -249,7 +233,7 @@ fun AvatarWithStatus(
     initials: String,
     modifier: Modifier = Modifier,
     photoUrl: String? = null,
-    colorHex: Long = 0xFF38BDF8,
+    colorHex: Long = 0xFF0A84FF,
     size: Dp = 48.dp,
     isOnline: Boolean = false,
     showShield: Boolean = false
@@ -284,24 +268,24 @@ fun AvatarWithStatus(
                     .background(
                         Brush.linearGradient(
                             colors = listOf(
-                                baseColor.copy(alpha = 0.25f),
+                                baseColor.copy(alpha = 0.35f),
                                 CyberBgSurfaceElevated
                             )
                         )
                     )
-                    .border(BorderStroke(1.dp, baseColor.copy(alpha = 0.35f)), CircleShape),
+                    .border(BorderStroke(1.dp, baseColor.copy(alpha = 0.4f)), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = initials.take(2).uppercase().ifEmpty { "U" },
                     color = CyberTextPrimary,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Bold,
                     fontSize = (size.value * 0.38f).sp
                 )
             }
         }
 
-        // Online dot or shield
+        // Online indicator dot
         if (isOnline) {
             Box(
                 modifier = Modifier
@@ -348,7 +332,7 @@ fun NetworkQualityBadge(
         modifier = modifier,
         shape = RoundedCornerShape(8.dp),
         color = CyberBgSurfaceElevated,
-        border = BorderStroke(1.dp, tierColor.copy(alpha = 0.4f))
+        border = BorderStroke(1.dp, tierColor.copy(alpha = 0.3f))
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -375,7 +359,6 @@ fun NetworkQualityBadge(
             Spacer(modifier = Modifier.width(6.dp))
             Text(
                 text = "${metrics.rttMs}ms • ${metrics.currentAudioBitrateKbps}kbps",
-                fontFamily = FontFamily.Monospace,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
                 color = tierColor
@@ -384,13 +367,12 @@ fun NetworkQualityBadge(
                 Spacer(modifier = Modifier.width(4.dp))
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(3.dp))
+                        .clip(RoundedCornerShape(4.dp))
                         .background(CyberAmber.copy(alpha = 0.2f))
                         .padding(horizontal = 4.dp, vertical = 1.dp)
                 ) {
                     Text(
                         text = "PRIORITY",
-                        fontFamily = FontFamily.Monospace,
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
                         color = CyberAmber
@@ -414,8 +396,9 @@ fun DeliveryTick(
         val (icon, tint, label) = when (status) {
             DeliveryStatus.SENDING -> Triple(Icons.Default.Schedule, CyberTextMuted, "Sending")
             DeliveryStatus.SENT -> Triple(Icons.Default.Check, CyberTextSecondary, "Sent")
-            DeliveryStatus.DELIVERED -> Triple(Icons.Default.DoneAll, CyberTextSecondary, "Delivery")
+            DeliveryStatus.DELIVERED -> Triple(Icons.Default.DoneAll, CyberTextSecondary, "Delivered")
             DeliveryStatus.SEEN -> Triple(Icons.Default.DoneAll, CyberNeonCyan, "Seen")
+            DeliveryStatus.FAILED -> Triple(Icons.Default.ErrorOutline, CyberCrimson, "Failed")
         }
         Icon(
             imageVector = icon,
@@ -427,7 +410,6 @@ fun DeliveryTick(
             Spacer(modifier = Modifier.width(3.dp))
             Text(
                 text = label,
-                fontFamily = FontFamily.Monospace,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Medium,
                 color = tint

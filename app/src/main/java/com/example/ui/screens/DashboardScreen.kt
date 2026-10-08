@@ -270,13 +270,13 @@ fun DashboardScreen(
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 color = CyberTextPrimary,
-                                fontSize = 13.sp
+                                fontSize = 14.sp
                             )
                             Text(
                                 text = "Tap to search contacts & start a conversation",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = CyberTextSecondary,
-                                fontSize = 11.sp
+                                fontSize = 12.sp
                             )
                         }
                         Box(
@@ -288,9 +288,8 @@ fun DashboardScreen(
                         ) {
                             Text(
                                 text = "NEW CHAT",
-                                fontFamily = FontFamily.Monospace,
+                                style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 10.sp,
                                 color = CyberNeonCyan
                             )
                         }
@@ -298,7 +297,7 @@ fun DashboardScreen(
                 }
             }
         } else {
-            items(state.recentConversations) { conv ->
+            items(state.recentConversations, key = { it.id }) { conv ->
                 ConversationItemRow(
                     conversation = conv,
                     onClick = { onOpenConversation(conv.id) }
@@ -337,7 +336,7 @@ fun DashboardScreen(
                 EmptyStateCard(text = "No recent calls")
             }
         } else {
-            items(state.recentCalls) { call ->
+            items(state.recentCalls, key = { it.id }) { call ->
                 CallItemRow(
                     call = call,
                     onCallBack = { onStartCall(call.contactId, call.callType == CallType.VIDEO) }

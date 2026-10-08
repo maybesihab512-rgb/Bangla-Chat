@@ -213,6 +213,10 @@ class ChatViewModel(
         chatRepository.setTyping(conversationId, false)
     }
 
+    fun retryMessage(conversationId: String, messageId: String) {
+        chatRepository.retryMessage(conversationId, messageId)
+    }
+
     fun uploadMedia(
         conversationId: String,
         uri: Uri,

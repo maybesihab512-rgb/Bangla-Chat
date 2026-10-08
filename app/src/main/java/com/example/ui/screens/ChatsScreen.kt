@@ -358,7 +358,7 @@ fun ChatsScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(conversations) { conv ->
+                    items(conversations, key = { it.id }) { conv ->
                         ConversationCard(
                             conversation = conv,
                             onClick = {
@@ -514,7 +514,7 @@ fun ChatsScreen(
                             }
                         }
                     } else {
-                        items(displayPeers) { peer ->
+                        items(displayPeers, key = { it.id }) { peer ->
                             PeerSelectionRow(
                                 peer = peer,
                                 onSelect = {

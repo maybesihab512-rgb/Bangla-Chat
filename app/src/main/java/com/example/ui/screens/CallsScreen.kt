@@ -235,7 +235,7 @@ fun CallsScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(callList) { call ->
+                    items(callList, key = { it.id }) { call ->
                         CallRecordCard(
                             call = call,
                             onCallBack = { onStartCall(call.contactId, call.callType == CallType.VIDEO) }

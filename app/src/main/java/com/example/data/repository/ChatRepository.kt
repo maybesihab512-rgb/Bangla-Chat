@@ -488,7 +488,21 @@ class ChatRepository(
         val currentUserId = authRepository.currentUser.value?.id ?: Firebase.auth.currentUser?.uid
             ?: return Result.failure(IllegalStateException("Not authenticated"))
         val currentConv = _conversations.value.find { it.id == conversationId }
-        val receiverId = currentConv?.participantIds?.firstOrNull { it != currentUserId } ?: ""
+        var receiverId = currentConv?.participantIds?.firstOrNull { it != currentUserId } ?: ""
+        if (receiverId.isBlank() && conversationId.startsWith("conv_")) {
+            val parts = conversationId.removePrefix("conv_").split("_")
+            receiverId = parts.firstOrNull { it != currentUserId } ?: ""
+        }
+        if (receiverId.isBlank()) {
+            try {
+                val convDoc = db.collection("conversations").document(conversationId).get().await()
+                @Suppress("UNCHECKED_CAST")
+                val pIds = convDoc.get("participantIds") as? List<String>
+                receiverId = pIds?.firstOrNull { it != currentUserId } ?: ""
+            } catch (e: Exception) {
+                // Ignore transient lookup error
+            }
+        }
 
         val now = System.currentTimeMillis()
         val messageId = "msg_${now}_${(1000..9999).random()}"
@@ -583,14 +597,24 @@ class ChatRepository(
                 .set(messageData)
                 .await()
 
-            // 4. Update parent conversation metadata
+            // 4. Update parent conversation metadata ensuring participantIds is always populated
             val summaryText = when (type) {
                 MessageType.IMAGE -> "📷 Photo"
                 MessageType.VIDEO -> "🎥 Video"
                 MessageType.FILE -> "📄 $fileName"
                 else -> displayContent
             }
-            val convUpdate = hashMapOf(
+            val participants = if (currentConv != null && currentConv.participantIds.size >= 2) {
+                currentConv.participantIds
+            } else if (receiverId.isNotBlank()) {
+                listOf(currentUserId, receiverId)
+            } else {
+                listOf(currentUserId, "peer")
+            }
+
+            val convUpdate = hashMapOf<String, Any>(
+                "conversationId" to conversationId,
+                "participantIds" to participants,
                 "lastMessage" to summaryText,
                 "lastSenderId" to currentUserId,
                 "lastMessageTime" to FieldValue.serverTimestamp(),
@@ -616,7 +640,28 @@ class ChatRepository(
             Result.success(downloadUrl)
         } catch (e: Exception) {
             Log.e("ChatRepository", "Failed to upload and send media", e)
+            updateLocalMessageStatus(conversationId, messageId, DeliveryStatus.FAILED)
             Result.failure(e)
+        }
+    }
+
+    fun retryMessage(conversationId: String, messageId: String) {
+        val msg = _messagesMap.value[conversationId]?.find { it.id == messageId } ?: return
+        if (msg.type == MessageType.TEXT) {
+            sendMessage(conversationId, msg.content, msg.type, msg.replyToMessage)
+        } else if (msg.mediaUrl.isNotBlank()) {
+            scope.launch {
+                uploadAndSendMedia(
+                    conversationId = conversationId,
+                    uri = Uri.parse(msg.mediaUrl),
+                    type = msg.type,
+                    fileName = msg.mediaFileName,
+                    fileSize = msg.mediaFileSize,
+                    mimeType = "",
+                    caption = msg.content,
+                    durationSeconds = msg.mediaDurationSeconds
+                )
+            }
         }
     }
 
@@ -632,7 +677,7 @@ class ChatRepository(
                     val now = System.currentTimeMillis()
                     val lastSeenMs = lastSeen?.toDate()?.time ?: 0L
                     val diffMs = now - lastSeenMs
-                    val isOnline = (status == "online") && (lastSeenMs > 0 && diffMs < 75_000L)
+                    val isOnline = (status == "online") && (lastSeenMs <= 0 || diffMs < 120_000L)
                     val lastSeenText = formatLastSeen(lastSeen, isOnline)
 
                     val presence = PeerPresence(

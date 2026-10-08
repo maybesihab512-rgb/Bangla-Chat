@@ -111,17 +111,6 @@ fun ActiveCallScreen(
     val active = session!!
     val context = LocalContext.current
 
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.98f,
-        targetValue = 1.04f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "callingPulse"
-    )
-
     val permissionsToRequest = remember(active.callType) {
         if (active.callType == CallType.VIDEO) {
             arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA)
@@ -219,9 +208,7 @@ fun ActiveCallScreen(
                             modifier = Modifier.padding(24.dp)
                         ) {
                             Box(
-                                modifier = Modifier
-                                    .size(130.dp)
-                                    .scale(pulseScale),
+                                modifier = Modifier.size(130.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 AvatarWithStatus(
@@ -329,11 +316,9 @@ fun ActiveCallScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             if (!isVideoCall) {
-                // Audio Avatar with futuristic pulse
+                // Audio Avatar
                 Box(
-                    modifier = Modifier
-                        .size(130.dp)
-                        .scale(if (active.connectionState == ConnectionState.CONNECTED) 1f else pulseScale),
+                    modifier = Modifier.size(130.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Box(

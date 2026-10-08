@@ -21,6 +21,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.mutableFloatStateOf
+import com.example.data.MediaManager
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,15 +53,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.CameraAlt
+import java.io.File
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Forward
 import androidx.compose.material.icons.filled.GraphicEq
@@ -67,6 +76,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Star
@@ -117,6 +127,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import coil.compose.SubcomposeAsyncImage
+import com.example.model.DeliveryStatus
 import com.example.model.Message
 import com.example.model.MessageType
 import com.example.ui.components.AvatarWithStatus
@@ -165,6 +176,7 @@ fun ChatDetailScreen(
     val isTyping by isTypingFlow.collectAsState()
 
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val playingMessageId by viewModel.audioPlaybackManager.currentPlayingMessageId.collectAsState()
     val isPlayingAudio by viewModel.audioPlaybackManager.isPlaying.collectAsState()
     val audioProgress by viewModel.audioPlaybackManager.progress.collectAsState()
@@ -199,6 +211,44 @@ fun ChatDetailScreen(
                     Toast.makeText(context, err, Toast.LENGTH_LONG).show()
                 }
             )
+        }
+    }
+
+    val cameraCaptureLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicturePreview()
+    ) { bitmap ->
+        if (bitmap != null) {
+            try {
+                val photoFile = File(context.cacheDir, "camera_${System.currentTimeMillis()}.jpg")
+                val stream = photoFile.outputStream()
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, stream)
+                stream.flush()
+                stream.close()
+                val uri = Uri.fromFile(photoFile)
+                viewModel.uploadMedia(
+                    conversationId = conversationId,
+                    uri = uri,
+                    type = MessageType.IMAGE,
+                    fileName = "camera_photo.jpg",
+                    fileSize = "${photoFile.length() / 1024} KB",
+                    mimeType = "image/jpeg",
+                    onError = { err ->
+                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                    }
+                )
+            } catch (e: Exception) {
+                Toast.makeText(context, "Could not capture image", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            cameraCaptureLauncher.launch(null)
+        } else {
+            Toast.makeText(context, "Camera permission required to take photo", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -451,7 +501,7 @@ fun ChatDetailScreen(
                 }
             }
 
-            items(displayMessages) { msg ->
+            items(displayMessages, key = { it.id }) { msg ->
                 MessageBubble(
                     message = msg,
                     isAudioPlaying = isPlayingAudio && playingMessageId == msg.id,
@@ -460,7 +510,8 @@ fun ChatDetailScreen(
                     onPlayAudio = { audioUrl -> viewModel.playAudio(msg.id, audioUrl) },
                     onOpenImage = { url, caption -> viewingImageUrl = Pair(url, caption) },
                     onOpenVideo = { url, title -> viewingVideoUrl = Pair(url, title) },
-                    onOpenFile = { url, name -> openDocumentUrl(context, url, name) },
+                    onOpenFile = { url, name -> openDocumentUrl(context, url, name, coroutineScope) },
+                    onRetry = { viewModel.retryMessage(conversationId, it.id) },
                     onLongClick = { selectedMessageForAction = msg },
                     onReply = { viewModel.setReplyingTo(msg) }
                 )
@@ -595,32 +646,87 @@ fun ChatDetailScreen(
                 }
             }
         } else {
-            // Standard Composer Bar
+            // Modern Messenger-Style Composer Dock
             Surface(
                 color = CyberBgSurface,
-                border = BorderStroke(1.dp, CyberBorderSubtle)
+                border = BorderStroke(0.5.dp, CyberBorderSubtle.copy(alpha = 0.8f))
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                        .padding(horizontal = 6.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(
-                        onClick = { showAttachmentSheet = true },
-                        modifier = Modifier.size(42.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.AttachFile,
-                            contentDescription = "Attach media",
-                            tint = CyberNeonCyan,
-                            modifier = Modifier.size(22.dp)
-                        )
+                    if (textInput.isBlank()) {
+                        IconButton(
+                            onClick = { showAttachmentSheet = true },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add media or file",
+                                tint = CyberNeonCyan,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
+                                val hasCameraPermission = ContextCompat.checkSelfPermission(
+                                    context,
+                                    Manifest.permission.CAMERA
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (hasCameraPermission) {
+                                    cameraCaptureLauncher.launch(null)
+                                } else {
+                                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                }
+                            },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CameraAlt,
+                                contentDescription = "Take Photo",
+                                tint = CyberNeonCyan,
+                                modifier = Modifier.size(21.dp)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
+                                photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Image,
+                                contentDescription = "Choose from gallery",
+                                tint = CyberNeonCyan,
+                                modifier = Modifier.size(21.dp)
+                            )
+                        }
+                    } else {
+                        IconButton(
+                            onClick = { showAttachmentSheet = true },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add media",
+                                tint = CyberNeonCyan,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
                     }
 
                     OutlinedTextField(
                         value = textInput,
-                        onValueChange = { textInput = it },
+                        onValueChange = {
+                            textInput = it
+                            viewModel.setTyping(conversationId, it.isNotBlank())
+                        },
                         placeholder = {
                             Text(
                                 text = "Message...",
@@ -631,11 +737,11 @@ fun ChatDetailScreen(
                         modifier = Modifier
                             .weight(1f)
                             .padding(horizontal = 4.dp),
-                        shape = RoundedCornerShape(20.dp),
+                        shape = RoundedCornerShape(22.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = CyberBgCard,
                             unfocusedContainerColor = CyberBgCard,
-                            focusedBorderColor = CyberNeonCyan,
+                            focusedBorderColor = CyberNeonCyan.copy(alpha = 0.5f),
                             unfocusedBorderColor = CyberBorderSubtle,
                             focusedTextColor = CyberTextPrimary,
                             unfocusedTextColor = CyberTextPrimary,
@@ -656,14 +762,14 @@ fun ChatDetailScreen(
                                 textInput = ""
                             },
                             modifier = Modifier
-                                .size(42.dp)
+                                .size(40.dp)
                                 .clip(CircleShape)
                                 .background(CyberNeonCyan)
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.Send,
                                 contentDescription = "Send",
-                                tint = CyberBgDark,
+                                tint = Color.White,
                                 modifier = Modifier.size(18.dp)
                             )
                         }
@@ -681,7 +787,7 @@ fun ChatDetailScreen(
                                 }
                             },
                             modifier = Modifier
-                                .size(42.dp)
+                                .size(40.dp)
                                 .clip(CircleShape)
                                 .background(CyberBgSurfaceElevated)
                         ) {
@@ -765,9 +871,14 @@ fun ChatDetailScreen(
         }
     }
 
-    // Full-Screen Image Viewer Dialog
+    // Full-Screen Image Viewer Dialog with Pinch-to-Zoom, Double-Tap Zoom, and Download
     if (viewingImageUrl != null) {
         val (imgUrl, caption) = viewingImageUrl!!
+        var scale by remember { mutableFloatStateOf(1f) }
+        var offset by remember { mutableStateOf(Offset.Zero) }
+        val viewerScope = rememberCoroutineScope()
+        var isSavingImage by remember { mutableStateOf(false) }
+
         Dialog(
             onDismissRequest = { viewingImageUrl = null },
             properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -775,23 +886,58 @@ fun ChatDetailScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.95f))
+                    .background(Color.Black.copy(alpha = 0.96f))
                     .statusBarsPadding()
                     .navigationBarsPadding()
             ) {
-                SubcomposeAsyncImage(
-                    model = imgUrl,
-                    contentDescription = "Full screen photo",
-                    contentScale = ContentScale.Fit,
-                    loading = {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(color = CyberNeonCyan)
-                        }
-                    },
+                Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(16.dp)
-                )
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onDoubleTap = {
+                                    if (scale > 1f) {
+                                        scale = 1f
+                                        offset = Offset.Zero
+                                    } else {
+                                        scale = 2.5f
+                                        offset = Offset.Zero
+                                    }
+                                }
+                            )
+                        }
+                        .pointerInput(Unit) {
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                scale = (scale * zoom).coerceIn(0.8f, 5f)
+                                if (scale > 1f) {
+                                    offset = Offset(offset.x + pan.x, offset.y + pan.y)
+                                } else {
+                                    offset = Offset.Zero
+                                }
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    SubcomposeAsyncImage(
+                        model = imgUrl,
+                        contentDescription = "Full screen photo",
+                        contentScale = ContentScale.Fit,
+                        loading = {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(color = CyberNeonCyan)
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                scaleX = scale
+                                scaleY = scale
+                                translationX = offset.x
+                                translationY = offset.y
+                            }
+                            .padding(16.dp)
+                    )
+                }
 
                 Row(
                     modifier = Modifier
@@ -810,27 +956,75 @@ fun ChatDetailScreen(
                         maxLines = 1,
                         modifier = Modifier.weight(1f)
                     )
-                    IconButton(
-                        onClick = { viewingImageUrl = null },
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(CyberBgSurface)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close photo",
-                            tint = CyberNeonCyan
-                        )
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = {
+                                if (!isSavingImage) {
+                                    isSavingImage = true
+                                    viewerScope.launch {
+                                        val saveResult = MediaManager.saveMediaToGallery(
+                                            context = context,
+                                            mediaUrl = imgUrl,
+                                            fileName = "photo_${System.currentTimeMillis()}.jpg",
+                                            isVideo = false
+                                        )
+                                        isSavingImage = false
+                                        saveResult.onSuccess { msg ->
+                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                        }.onFailure { err ->
+                                            Toast.makeText(context, "Save failed: ${err.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+                            },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(CyberBgSurface)
+                        ) {
+                            if (isSavingImage) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = CyberElectricEmerald
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = "Save photo to gallery",
+                                    tint = CyberElectricEmerald
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(8.dp))
+
+                        IconButton(
+                            onClick = { viewingImageUrl = null },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(CircleShape)
+                                .background(CyberBgSurface)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close photo",
+                                tint = CyberNeonCyan
+                            )
+                        }
                     }
                 }
             }
         }
     }
 
-    // Full-Screen In-App Video Player Dialog
+    // Full-Screen In-App Video Player Dialog with Download
     if (viewingVideoUrl != null) {
         val (videoUrl, videoTitle) = viewingVideoUrl!!
+        val videoScope = rememberCoroutineScope()
+        var isSavingVideo by remember { mutableStateOf(false) }
+
         Dialog(
             onDismissRequest = { viewingVideoUrl = null },
             properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -863,18 +1057,63 @@ fun ChatDetailScreen(
                             maxLines = 1,
                             modifier = Modifier.weight(1f)
                         )
-                        IconButton(
-                            onClick = { viewingVideoUrl = null },
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(CyberBgSurface)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Close video",
-                                tint = CyberNeonCyan
-                            )
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = {
+                                    if (!isSavingVideo) {
+                                        isSavingVideo = true
+                                        videoScope.launch {
+                                            val saveResult = MediaManager.saveMediaToGallery(
+                                                context = context,
+                                                mediaUrl = videoUrl,
+                                                fileName = videoTitle.ifBlank { "video_${System.currentTimeMillis()}.mp4" },
+                                                isVideo = true
+                                            )
+                                            isSavingVideo = false
+                                            saveResult.onSuccess { msg ->
+                                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                            }.onFailure { err ->
+                                                Toast.makeText(context, "Save failed: ${err.message}", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(CyberBgSurface)
+                            ) {
+                                if (isSavingVideo) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                        color = CyberElectricEmerald
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.Download,
+                                        contentDescription = "Save video to gallery",
+                                        tint = CyberElectricEmerald
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            IconButton(
+                                onClick = { viewingVideoUrl = null },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(CyberBgSurface)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Close video",
+                                    tint = CyberNeonCyan
+                                )
+                            }
                         }
                     }
 
@@ -900,10 +1139,37 @@ fun ChatDetailScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(16.dp),
-                        horizontalArrangement = Arrangement.Center
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         CyberOutlinedButton(
-                            text = "Open In System Player",
+                            text = if (isSavingVideo) "Saving Video..." else "Save to Gallery",
+                            onClick = {
+                                if (!isSavingVideo) {
+                                    isSavingVideo = true
+                                    videoScope.launch {
+                                        val saveResult = MediaManager.saveMediaToGallery(
+                                            context = context,
+                                            mediaUrl = videoUrl,
+                                            fileName = videoTitle.ifBlank { "video_${System.currentTimeMillis()}.mp4" },
+                                            isVideo = true
+                                        )
+                                        isSavingVideo = false
+                                        saveResult.onSuccess { msg ->
+                                            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                        }.onFailure { err ->
+                                            Toast.makeText(context, "Save failed: ${err.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+                            },
+                            icon = Icons.Default.Download,
+                            borderColor = CyberElectricEmerald,
+                            textColor = CyberElectricEmerald,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        CyberOutlinedButton(
+                            text = "External Player",
                             onClick = {
                                 try {
                                     val intent = Intent(Intent.ACTION_VIEW).apply {
@@ -916,7 +1182,7 @@ fun ChatDetailScreen(
                                 }
                             },
                             icon = Icons.Default.PlayArrow,
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
@@ -1096,6 +1362,7 @@ private fun MessageBubble(
     onOpenImage: (String, String) -> Unit = { _, _ -> },
     onOpenVideo: (String, String) -> Unit = { _, _ -> },
     onOpenFile: (String, String) -> Unit = { _, _ -> },
+    onRetry: (Message) -> Unit = {},
     onLongClick: () -> Unit,
     onReply: () -> Unit
 ) {
@@ -1333,6 +1600,8 @@ private fun MessageBubble(
                         }
                     }
                     MessageType.FILE -> {
+                        val bubbleScope = rememberCoroutineScope()
+                        val bubbleContext = LocalContext.current
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
@@ -1368,13 +1637,41 @@ private fun MessageBubble(
                                     color = if (isOutgoing) Color.White.copy(alpha = 0.8f) else CyberAmber
                                 )
                             }
+                            IconButton(
+                                onClick = {
+                                    if (message.mediaUrl.isNotBlank()) {
+                                        bubbleScope.launch {
+                                            Toast.makeText(bubbleContext, "Saving ${message.mediaFileName} to Downloads...", Toast.LENGTH_SHORT).show()
+                                            val saveRes = MediaManager.saveDocumentToDownloads(
+                                                context = bubbleContext,
+                                                fileUrl = message.mediaUrl,
+                                                fileName = message.mediaFileName,
+                                                mimeType = ""
+                                            )
+                                            saveRes.onSuccess { msg ->
+                                                Toast.makeText(bubbleContext, msg, Toast.LENGTH_SHORT).show()
+                                            }.onFailure { err ->
+                                                Toast.makeText(bubbleContext, "Save failed: ${err.message}", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.size(30.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = "Save to Downloads",
+                                    tint = if (isOutgoing) Color.White else CyberAmber,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
 
-                // Footer with time & tick
+                // Footer with time & tick / retry
                 Row(
                     modifier = Modifier.align(Alignment.End),
                     verticalAlignment = Alignment.CenterVertically
@@ -1387,6 +1684,20 @@ private fun MessageBubble(
                     if (isOutgoing) {
                         Spacer(modifier = Modifier.width(4.dp))
                         DeliveryTick(status = message.deliveryStatus)
+                        if (message.deliveryStatus == DeliveryStatus.FAILED) {
+                            Spacer(modifier = Modifier.width(4.dp))
+                            IconButton(
+                                onClick = { onRetry(message) },
+                                modifier = Modifier.size(18.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Retry sending",
+                                    tint = CyberCrimson,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -1514,18 +1825,43 @@ private fun queryFileMetadata(context: Context, uri: Uri, fallbackName: String):
     return Triple(fileName, formattedSize, mimeType)
 }
 
-private fun openDocumentUrl(context: Context, url: String, fileName: String) {
+private fun openDocumentUrl(
+    context: Context,
+    url: String,
+    fileName: String,
+    scope: kotlinx.coroutines.CoroutineScope
+) {
     if (url.isBlank()) {
         Toast.makeText(context, "File URL not available", Toast.LENGTH_SHORT).show()
         return
     }
-    try {
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            data = Uri.parse(url)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+    if (url.startsWith("content://") || url.startsWith("file://")) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse(url)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Toast.makeText(context, "No app available to open this file", Toast.LENGTH_SHORT).show()
         }
-        context.startActivity(intent)
-    } catch (e: Exception) {
-        Toast.makeText(context, "No app available to open this file", Toast.LENGTH_SHORT).show()
+    } else {
+        scope.launch {
+            Toast.makeText(context, "Opening $fileName...", Toast.LENGTH_SHORT).show()
+            val result = MediaManager.downloadDocument(context, url, fileName, "")
+            result.onSuccess { localFile ->
+                MediaManager.openDocumentFile(context, localFile, "")
+            }.onFailure {
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        data = Uri.parse(url)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    }
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    Toast.makeText(context, "No app available to open this file", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
     }
 }

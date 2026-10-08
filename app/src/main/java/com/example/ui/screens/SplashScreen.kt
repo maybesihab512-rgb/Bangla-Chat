@@ -9,6 +9,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -189,6 +190,7 @@ fun SplashScreen(
                 .clip(RoundedCornerShape(20.dp))
                 .border(BorderStroke(0.5.dp, CyberBorderSubtle.copy(alpha = 0.8f)), RoundedCornerShape(20.dp))
                 .background(CyberBgSurface.copy(alpha = 0.8f))
+                .clickable { onNavigateNext() }
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         )
     }

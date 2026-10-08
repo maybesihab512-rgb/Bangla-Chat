@@ -331,9 +331,19 @@ fun CipherNavHost(
                         val currentUser by authViewModel.currentUser.collectAsState()
                         CreateProfileScreen(
                             currentUser = currentUser,
-                            onSaveProfile = { name, handle, status ->
-                                authViewModel.completeProfile(name, handle, status)
-                                currentDestination = AppDestination.Dashboard
+                            onSaveProfile = { name, handle, status, photoUri ->
+                                if (photoUri != null) {
+                                    authViewModel.updateProfile(
+                                        displayName = name,
+                                        phoneNumber = currentUser?.phone ?: "",
+                                        photoUri = photoUri,
+                                        statusMessage = status,
+                                        onSuccess = { currentDestination = AppDestination.Dashboard }
+                                    )
+                                } else {
+                                    authViewModel.completeProfile(name, handle, status)
+                                    currentDestination = AppDestination.Dashboard
+                                }
                             }
                         )
                     }

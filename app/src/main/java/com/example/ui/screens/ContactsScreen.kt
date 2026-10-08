@@ -237,7 +237,7 @@ fun ContactsScreen(
                             }
                         }
                     } else {
-                        items(combinedList) { contact ->
+                        items(combinedList, key = { it.id }) { contact ->
                             ContactCard(
                                 contact = contact,
                                 onChatClick = { onStartChat(contact) },
@@ -272,7 +272,7 @@ fun ContactsScreen(
                             }
                         }
                     } else {
-                        items(filteredLocalContacts) { contact ->
+                        items(filteredLocalContacts, key = { it.id }) { contact ->
                             ContactCard(
                                 contact = contact,
                                 onChatClick = { onStartChat(contact) },
